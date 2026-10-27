@@ -1,0 +1,7 @@
+// Bowl poulet riz brocolis — 2 portions
+// Une ligne par ingrédient : quantité, unité (g, kg, ml, cl, l), nom.
+// Pièces : "2 oeufs @60g" (poids d'une pièce). Produit imposé : "... #<code-barres>".
+300 g filet de poulet
+150 g riz basmati
+200 g brocolis
+10 ml huile d'olive

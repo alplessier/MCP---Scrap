@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recettes & macros — Drive Jaude</title>
+  <meta name="description" content="Chiffrez vos recettes en euros et en macros avec les prix du Drive Carrefour Market Clermont-Ferrand Jaude.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥗</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <h1>Recettes &amp; macros</h1>
+      <p class="subtitle" id="store-info">Chargement du catalogue…</p>
+    </div>
+    <nav class="tabs wrap" role="tablist">
+      <button role="tab" class="tab" aria-selected="true" data-tab="recette">Recette</button>
+      <button role="tab" class="tab" aria-selected="false" data-tab="produits">Produits</button>
+      <button role="tab" class="tab" aria-selected="false" data-tab="mes-recettes">Mes recettes <span class="count" id="saved-count"></span></button>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <!-- Recette : mode libre -->
+    <section id="tab-recette" class="panel">
+      <div class="editor">
+        <div class="editor-main">
+          <label class="field">
+            <span class="label">Nom de la recette</span>
+            <input id="recipe-name" type="text" placeholder="Bowl poulet riz brocolis" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="label">Ingrédients <span class="hint">— un par ligne</span></span>
+            <textarea id="recipe-text" rows="8" spellcheck="false"
+              placeholder="300 g filet de poulet&#10;150 g riz basmati&#10;200 g brocolis&#10;10 ml huile d'olive&#10;2 oeufs @60g"></textarea>
+          </label>
+          <details class="syntax">
+            <summary>Format des lignes</summary>
+            <ul>
+              <li><code>200 g blanc de poulet</code> — unités : g, kg, ml, cl, l</li>
+              <li><code>2 oeufs @60g</code> — pièces, avec le poids d'une pièce (pour les macros)</li>
+              <li><code>3 avocats</code> — pièces : le prix est calculé si le produit est vendu à la pièce</li>
+              <li>Comptez le riz et les pâtes en poids <strong>sec</strong>.</li>
+            </ul>
+          </details>
+        </div>
+        <div class="editor-side">
+          <label class="field">
+            <span class="label">Portions</span>
+            <input id="recipe-portions" type="number" min="1" max="50" value="2" inputmode="numeric">
+          </label>
+          <fieldset class="field">
+            <legend class="label">Produit choisi par défaut</legend>
+            <label class="radio"><input type="radio" name="strategy" value="pertinence" checked> Le plus pertinent</label>
+            <label class="radio"><input type="radio" name="strategy" value="moins-cher"> Le moins cher au kilo</label>
+          </fieldset>
+          <div class="actions">
+            <button id="save-recipe" class="btn primary" type="button">Enregistrer</button>
+            <button id="share-recipe" class="btn" type="button">Copier le lien</button>
+            <button id="clear-recipe" class="btn ghost" type="button">Effacer</button>
+          </div>
+          <p class="toast" id="toast" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+
+      <div class="summary" id="summary" hidden>
+        <div class="stat">
+          <span class="stat-label">Coût par portion</span>
+          <span class="stat-value" id="s-cost">—</span>
+          <span class="stat-sub" id="s-cost-total"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Énergie par portion</span>
+          <span class="stat-value" id="s-kcal">—</span>
+          <span class="stat-sub" id="s-kcal-total"></span>
+        </div>
+        <div class="stat macros">
+          <span class="stat-label">Macros par portion</span>
+          <div class="macro-row">
+            <span><b id="s-p">—</b> protéines</span>
+            <span><b id="s-g">—</b> glucides</span>
+            <span><b id="s-l">—</b> lipides</span>
+          </div>
+          <div class="macro-bar" id="s-bar" aria-hidden="true"><i class="p"></i><i class="g"></i><i class="l"></i></div>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Courses (paquets entiers)</span>
+          <span class="stat-value" id="s-bought">—</span>
+          <span class="stat-sub">au Drive Jaude</span>
+        </div>
+      </div>
+
+      <div class="lines" id="lines"></div>
+      <p class="notes" id="notes"></p>
+    </section>
+
+    <!-- Catalogue -->
+    <section id="tab-produits" class="panel" hidden>
+      <div class="search-bar">
+        <input id="product-query" type="search" placeholder="Rechercher un produit : skyr, thon, flocons d'avoine…" autocomplete="off">
+        <select id="product-sort" aria-label="Trier">
+          <option value="pertinence">Pertinence</option>
+          <option value="prix-kg">Prix au kilo</option>
+          <option value="proteines-euro">Protéines par euro</option>
+          <option value="proteines">Protéines / 100 g</option>
+        </select>
+      </div>
+      <p class="muted" id="product-count"></p>
+      <div class="products" id="products"></div>
+    </section>
+
+    <!-- Recettes enregistrées -->
+    <section id="tab-mes-recettes" class="panel" hidden>
+      <p class="muted">Vos recettes sont enregistrées dans ce navigateur. Les prix sont recalculés avec le dernier relevé.</p>
+      <div class="saved" id="saved"></div>
+    </section>
+  </main>
+
+  <footer class="wrap site-footer">
+    Prix relevés chaque semaine sur carrefour.fr (Drive Market Clermont-Ferrand Jaude). Macros : Open Food Facts,
+    ou valeurs génériques Ciqual (marquées *). Les promotions fidélité ne sont pas déduites.
+  </footer>
+
+  <template id="line-template">
+    <article class="line">
+      <div class="line-head">
+        <span class="line-ingredient"></span>
+        <span class="line-cost"></span>
+      </div>
+      <select class="line-product" aria-label="Produit"></select>
+      <div class="line-meta"></div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
