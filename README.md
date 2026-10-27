@@ -14,11 +14,26 @@ Un site pour chiffrer ses recettes **en euros et en macros**, avec les prix du
 
 ## Le site
 
-| Onglet | Contenu |
+Inspiré de la simplicité de Jow, avec en plus la partie nutrition et sport :
+
+| Page | Contenu |
 |---|---|
-| **Recette** | Mode libre : un ingrédient par ligne (`300 g filet de poulet`, `2 oeufs @60g`…). Pour chaque ligne, le produit choisi (modifiable), son coût et ses macros, puis le coût, les kcal et les macros **par portion**, et le prix des paquets entiers à acheter. |
-| **Produits** | Recherche dans le catalogue, triable par prix au kilo ou par **grammes de protéines par euro**. |
-| **Mes recettes** | Recettes enregistrées dans le navigateur, recalculées avec les prix de la semaine. Le bouton « Copier le lien » partage une recette. |
+| **Recettes** | Catalogue de recettes sportives (`site/recettes.json`) en grandes cartes : prix par personne, protéines, kcal. Filtres (Protéiné, Après la séance, Prise de masse, Sèche, Petit-déj, Végétarien…) et recherche. Le bouton **+** ajoute au menu. |
+| **Fiche recette** | Nombre de couverts, **« Adapter à mon objectif »** (taille de portion calée sur vos besoins), macros comparées à un repas idéal, produits du Drive modifiables, mode **« Passer en cuisine »** étape par étape. |
+| **Menu** | Les recettes de la semaine, leurs couverts, le coût total et la moyenne des macros par repas. |
+| **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour. |
+| **Profil** | Âge, poids, taille, activité, objectif (sèche, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor). |
+| **Créer ma recette** | Le mode libre : un ingrédient par ligne, chiffré au Drive, enregistré dans « Mes recettes ». |
+
+Tout est enregistré dans le navigateur (menu, profil, recettes perso). Les calculs sont dans
+`site/core.js`, testés avec Node (`node --test tests/`), et un test vérifie que chaque ingrédient des
+recettes trouve un produit du Drive avec des macros.
+
+### Ajouter une recette au catalogue
+
+Ajoutez une entrée à `site/recettes.json` (ingrédients au format du mode libre, pour les portions
+indiquées), puis lancez `python -m recette_macros.site && node --test tests/` : le test signale tout
+ingrédient qui ne trouve pas de produit ou de macros.
 
 ### Envoyer une recette au panier Carrefour
 
