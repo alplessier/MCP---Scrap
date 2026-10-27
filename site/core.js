@@ -269,6 +269,120 @@ const Core = (() => {
   }
   const tooLightForMeal = (kcalPerPortion, target) => !!target && kcalPerPortion > 0 && target.kcal / kcalPerPortion > MAX_SIZE + 0.25;
 
+  // ---------- Caractéristiques déduites des recettes ----------
+  // Déduites des noms d'ingrédients et des étapes, pour ne pas annoter 123 recettes à la main.
+  // Chaque entrée : mots à chercher (début de mot, sans accents) ; « sauf » : mots qui annulent (lait de coco ≠ lait).
+
+  const ALLERGENS = {
+    gluten: { label: "Gluten", mots: ["pate", "spaghetti", "penne", "macaroni", "lasagne", "pain", "wrap", "farine", "chapelure", "semoule", "boulgour", "muesli", "biscuit", "speculoos", "gnocchi", "avoine", "corn flake", "pizza", "couscous", "galette"], sauf: ["pate a tartiner"] },
+    lait: { label: "Lait / lactose", mots: ["lait", "skyr", "fromage", "yaourt", "creme", "beurre", "feta", "mozzarella", "parmesan", "emmental", "cheddar", "cottage", "ricotta", "chevre", "whey"], sauf: ["lait de coco", "beurre de cacahuete", "lait de soja", "lait d amande", "creme de coco"] },
+    oeufs: { label: "Œufs", mots: ["oeuf", "blanc d oeuf", "blancs d oeuf"] },
+    arachides: { label: "Arachides", mots: ["cacahuete", "arachide"] },
+    "fruits-coque": { label: "Fruits à coque", mots: ["amande", "noix", "noisette", "pesto", "cajou", "pistache"], sauf: ["noix de coco"] },
+    poisson: { label: "Poisson", mots: ["saumon", "thon", "cabillaud", "sardine", "maquereau", "colin", "poisson"] },
+    crustaces: { label: "Crustacés", mots: ["crevette", "crabe", "gambas"] },
+    soja: { label: "Soja", mots: ["soja", "tofu", "edamame"] },
+    sesame: { label: "Sésame", mots: ["sesame", "tahin"] },
+    moutarde: { label: "Moutarde", mots: ["moutarde"] },
+  };
+  const MEAT = ["poulet", "dinde", "boeuf", "steak", "jambon", "lardon", "porc", "veau", "agneau", "merguez", "saucisse", "chorizo", "bacon", "viande"];
+  const PORK = ["jambon", "lardon", "porc", "chorizo", "bacon", "saucisson"];
+  const ANIMAL_OTHER = ["miel", "gelatine"]; // ni viande ni poisson, mais pas végétalien
+
+  const DIETS = {
+    aucun: { label: "Aucun" },
+    vegetarien: { label: "Végétarien", hint: "ni viande ni poisson" },
+    pescetarien: { label: "Pescétarien", hint: "poisson oui, viande non" },
+    vegetalien: { label: "Végétalien", hint: "aucun produit animal" },
+    "sans-porc": { label: "Sans porc" },
+  };
+
+  const EQUIPMENT = {
+    four: { label: "Four", mots: ["four", "enfourn", "gratin", "rotiss"] },
+    "micro-ondes": { label: "Micro-ondes", mots: ["micro onde"] },
+    mixeur: { label: "Mixeur / blender", mots: ["mix", "blender"] },
+    plaques: { label: "Plaques de cuisson", mots: ["poele", "casserole", "wok", "faites cuire", "faites revenir", "faites dorer", "saisi", "mijot", "bouill", "faites chauffer", "faites tomber", "faites fondre", "faites sauter", "faites le", "faites la", "griller", "toast", "brouill"] },
+    gaufrier: { label: "Gaufrier", mots: ["gaufrier"] },
+  };
+
+  const SWEET = ["banane", "miel", "fruits rouges", "myrtille", "framboise", "pomme", "cacao", "chocolat", "sirop", "datte", "confiture", "speculoos", "raisin", "fraise"];
+
+  // « mots » correspond si le texte contient ce mot en début de mot (après normalisation)
+  const hasAny = (text, mots) => mots.some((m) => new RegExp(`(^|[^a-z])${m.replace(/ /g, "[^a-z]*")}`).test(text));
+  const clean = (s) => normalize(s).replace(/[^a-z0-9]+/g, " ");
+
+  function recipeTraits(r) {
+    const ingredientNames = (r.ingredients || []).map((l) => clean(parseLine(l).name || l));
+    const ingText = ingredientNames.join(" | ");
+    const steps = (r.etapes || []).map(clean);
+    const allergens = Object.entries(ALLERGENS)
+      .filter(([, a]) => ingredientNames.some((n) => hasAny(n, a.mots) && !(a.sauf && hasAny(n, a.sauf))))
+      .map(([k]) => k);
+    const meat = hasAny(ingText, MEAT);
+    const fish = allergens.includes("poisson") || allergens.includes("crustaces");
+    // étape par étape : « faites cuire 1 minute au micro-ondes » ne demande pas de plaques de cuisson
+    const STOVE = ["poele", "casserole", "wok", "plaque"];
+    const equipment = Object.keys(EQUIPMENT).filter((k) => steps.some((st) => {
+      if (k !== "plaques") return hasAny(st, EQUIPMENT[k].mots);
+      const elsewhere = hasAny(st, EQUIPMENT.four.mots) || hasAny(st, EQUIPMENT["micro-ondes"].mots);
+      return elsewhere ? hasAny(st, STOVE) : hasAny(st, EQUIPMENT.plaques.mots);
+    }));
+    const vegetal = !meat && !fish && !allergens.includes("oeufs") && !allergens.includes("lait") && !hasAny(ingText, ANIMAL_OTHER);
+    return {
+      allergens, meat, fish, pork: hasAny(ingText, PORK), vegetal, equipment: r.materiel || equipment,
+      sweet: hasAny(ingText, SWEET), ingredientNames,
+    };
+  }
+
+  // prefs : contraintes réunies du foyer { allergies:[], regimes:[], deteste:[], materiel:[] | null }
+  function recipeCompat(r, prefs, traits = recipeTraits(r)) {
+    const reasons = [];
+    for (const a of prefs.allergies || []) if (traits.allergens.includes(a)) reasons.push(`contient : ${ALLERGENS[a].label.toLowerCase()}`);
+    for (const d of prefs.regimes || []) {
+      if (d === "vegetarien" && (traits.meat || traits.fish)) reasons.push("pas végétarien");
+      if (d === "pescetarien" && traits.meat) reasons.push("contient de la viande");
+      if (d === "vegetalien" && !traits.vegetal) reasons.push("pas végétalien");
+      if (d === "sans-porc" && traits.pork) reasons.push("contient du porc");
+    }
+    for (const x of prefs.deteste || []) {
+      const tokens = queryTokens(x);
+      if (tokens.length && traits.ingredientNames.some((n) => relevance(tokens, words(n)) >= 0)) reasons.push(`contient : ${x}`);
+    }
+    if (prefs.materiel) {
+      for (const e of traits.equipment) if (!prefs.materiel.includes(e)) reasons.push(`demande : ${EQUIPMENT[e].label.toLowerCase()}`);
+    }
+    return { ok: reasons.length === 0, reasons: [...new Set(reasons)] };
+  }
+
+  // Le foyer : contraintes réunies des membres présents (allergies, régimes, dégoûts) + réglages communs
+  function householdPrefs(members, foyer = {}) {
+    const union = (k) => [...new Set(members.flatMap((m) => (m.prefs && m.prefs[k]) || []))];
+    return {
+      allergies: union("allergies"), regimes: union("regimes").filter((d) => d !== "aucun"), deteste: union("deteste"),
+      materiel: foyer.materiel || null, budget: +foyer.budget || null, temps: +foyer.temps || null,
+    };
+  }
+
+  // Portion de chaque membre pour une recette : calée sur son repas idéal (ou standard sans objectif)
+  function memberPortions(kcalPerPortion, members) {
+    return members.map((m) => {
+      const daily = dailyTargets(m);
+      const meal = daily ? mealTarget(daily, m.repas || 3) : null;
+      return { id: m.id, nom: m.nom, size: meal ? portionsForTarget(kcalPerPortion, meal) : 1, meal };
+    });
+  }
+
+  // Budget (€ par jour et par personne) et temps (minutes de cuisine par jour) : pas d'exclusion, mais
+  // la note baisse quand une portion dépasse le budget d'un repas ou la recette le temps d'un repas
+  // (on compte deux repas cuisinés par jour).
+  function budgetTimePenalty(costPerPortion, temps, prefs, meals = 3) {
+    let factor = 1;
+    const flags = [];
+    if (prefs.budget && costPerPortion > prefs.budget / meals) { factor *= 0.85; flags.push("budget"); }
+    if (prefs.temps && temps && temps > prefs.temps / 2) { factor *= 0.85; flags.push("temps"); }
+    return { factor, flags };
+  }
+
   // ---------- Partage ----------
 
   function encode(obj) {
@@ -295,6 +409,7 @@ const Core = (() => {
     normalize, words, queryTokens, relevance, loadCatalogue, search, proteinPerEuro, genericMacros,
     parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
+    ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
     encode, decode, cartUrl,
   };
 })();

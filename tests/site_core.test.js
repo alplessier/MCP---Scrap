@@ -105,3 +105,50 @@ test("note de pertinence : protéinée et bien dosée devant grasse ou trop lég
   const snack = Core.recipeScore({ macros: [250, 20, 25, 6], cost: 1 }, { ...opts, snack: true });
   assert.equal(snack.size, 1.25);
 });
+
+test("allergènes, régime et matériel déduits des ingrédients et des étapes", () => {
+  const omelette = { ingredients: ["3 oeufs", "40 g feta", "100 g épinards"], etapes: ["Faites cuire à la poêle 4 minutes."] };
+  const t = Core.recipeTraits(omelette);
+  assert.deepEqual(t.allergens.sort(), ["lait", "oeufs"]);
+  assert.equal(t.meat, false);
+  assert.equal(t.vegetal, false);
+  assert.deepEqual(t.equipment, ["plaques"]);
+  const mug = Core.recipeTraits({ ingredients: ["30 g flocons d'avoine", "100 ml lait de coco"], etapes: ["Faites cuire 1 minute au micro-ondes."] });
+  assert.deepEqual(mug.allergens, ["gluten"]);
+  assert.deepEqual(mug.equipment, ["micro-ondes"]);
+  assert.equal(Core.recipeTraits({ ingredients: ["2 c. à soupe beurre de cacahuète"] }).allergens.join(), "arachides");
+  assert.equal(Core.recipeTraits({ ingredients: ["150 g lardons"] }).pork, true);
+});
+
+test("compatibilité avec le foyer : allergies, régimes, dégoûts, matériel", () => {
+  const chili = { ingredients: ["300 g boeuf haché", "1 boîte haricots rouges", "1 oignon"], etapes: ["Faites revenir à la poêle."] };
+  assert.equal(Core.recipeCompat(chili, {}).ok, true);
+  const veg = Core.recipeCompat(chili, { regimes: ["vegetarien"] });
+  assert.equal(veg.ok, false);
+  assert.match(veg.reasons.join(), /végétarien/);
+  assert.equal(Core.recipeCompat(chili, { regimes: ["pescetarien"] }).ok, false);
+  assert.match(Core.recipeCompat(chili, { deteste: ["oignon"] }).reasons.join(), /oignon/);
+  assert.equal(Core.recipeCompat(chili, { deteste: ["courgette"] }).ok, true);
+  assert.equal(Core.recipeCompat(chili, { materiel: ["four"] }).ok, false);
+  assert.equal(Core.recipeCompat(chili, { materiel: ["plaques"] }).ok, true);
+  assert.equal(Core.recipeCompat({ ingredients: ["100 g tofu"] }, { allergies: ["soja"] }).ok, false);
+});
+
+test("foyer : contraintes réunies, portion de chacun, budget et temps", () => {
+  const a = { id: "a", nom: "A", sexe: "homme", age: 25, poids: 75, taille: 178, activite: "modere", objectif: "recompo", repas: 3,
+    prefs: { allergies: ["lait"], regimes: ["aucun"], deteste: ["olive"] } };
+  const b = { id: "b", nom: "B", sexe: "femme", age: 30, poids: 58, taille: 165, activite: "leger", objectif: "seche", repas: 3,
+    prefs: { allergies: ["lait", "soja"], regimes: ["vegetarien"], deteste: [] } };
+  const hp = Core.householdPrefs([a, b], { budget: "9", temps: "40", materiel: ["plaques"] });
+  assert.deepEqual(hp.allergies, ["lait", "soja"]);
+  assert.deepEqual(hp.regimes, ["vegetarien"]);
+  assert.deepEqual(hp.deteste, ["olive"]);
+  assert.equal(hp.budget, 9);
+  const [pa, pb] = Core.memberPortions(450, [a, b]);
+  assert.ok(pa.size > pb.size, "le sportif en recompo mange plus que la personne en sèche");
+  assert.equal(Core.memberPortions(450, [{ id: "c", nom: "C" }])[0].size, 1);
+  assert.equal(Core.budgetTimePenalty(2, 15, hp).factor, 1);
+  const pen = Core.budgetTimePenalty(4, 30, hp);
+  assert.deepEqual(pen.flags, ["budget", "temps"]);
+  assert.ok(pen.factor < 0.75);
+});
