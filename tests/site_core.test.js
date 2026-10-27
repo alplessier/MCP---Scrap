@@ -152,3 +152,20 @@ test("foyer : contraintes réunies, portion de chacun, budget et temps", () => {
   assert.deepEqual(pen.flags, ["budget", "temps"]);
   assert.ok(pen.factor < 0.75);
 });
+
+test("produits : protéines pour 100 kcal, et parcours du catalogue sans recherche", () => {
+  const cat = catalogue([
+    product({ ean: "1", nom: "Filet de poulet", macros: [110, 23, 0, 1.5] }),
+    product({ ean: "2", nom: "Pain de mie", macros: [270, 8, 48, 4] }),
+    product({ ean: "3", nom: "Eau minérale", macros: [0, 0, 0, 0] }),
+    product({ ean: "4", nom: "Biscuit mystère", macros: null }),
+    product({ ean: "5", nom: "Fond de veau", macros: [15, 6.1, 3, 3.9] }),
+  ]);
+  const [poulet, pain, eau] = cat.products;
+  assert.equal(Math.round(Core.proteinPer100kcal(poulet) * 10) / 10, 20.9);
+  assert.equal(Core.proteinPer100kcal(eau), -1);
+  assert.deepEqual(Core.search(cat, "", { sort: "proteines-kcal" }).map((p) => p.ean), ["1", "2"]);
+  assert.deepEqual(Core.search(cat, "", { sort: "proteines" }).map((p) => p.ean), ["1", "2", "5", "3"]);
+  assert.deepEqual(Core.search(cat, ""), [], "sans recherche ni tri : rien");
+  assert.equal(pain.nom, "Pain de mie");
+});

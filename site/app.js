@@ -716,27 +716,55 @@ function draftPreview(draft) {
   <div class="panel"><h2>Produits du Drive</h2>${ingredientsHtml(res.lines)}</div>`;
 }
 
+const PRODUCT_SORTS = [["pertinence", "Pertinence"], ["proteines", "Protéines / 100 g"], ["proteines-kcal", "Protéines / 100 kcal"],
+  ["proteines-euro", "Protéines par euro"], ["prix-kg", "Prix au kilo"]];
+const RAYON_LABELS = {
+  "viandes-et-poissons": "Viandes et poissons", cremerie: "Crèmerie", "charcuterie-traiteur": "Charcuterie et traiteur",
+  "epicerie-salee": "Épicerie salée", "epicerie-sucree": "Épicerie sucrée", "fruits-et-legumes": "Fruits et légumes",
+  "vegetal-vegetarien": "Végétal et végétarien", "dietetique-preferences-alimentaires": "Diététique et protéines",
+  surgeles: "Surgelés", boissons: "Boissons", "pains-et-patisseries": "Pains et pâtisseries",
+};
+
 function viewProducts() {
   const q = ui.productQuery || "";
-  const sort = ui.productSort || "pertinence";
-  const hits = C.queryTokens(q).length ? C.search(cat, q, { sort }) : [];
+  const searching = C.queryTokens(q).length > 0;
+  // sans recherche, « Pertinence » n'a pas de sens : un tri ou un rayon choisi parcourt le catalogue
+  let sort = ui.productSort || "pertinence";
+  if (!searching && sort === "pertinence" && ui.productRayon) sort = "proteines";
+  const rayon = ui.productRayon || "";
+  const hits = C.search(cat, q, { sort, rayon: rayon || null });
+  const rayons = [...new Set(cat.products.map((p) => p.rayon).filter(Boolean))]
+    .sort((a, b) => (RAYON_LABELS[a] || a).localeCompare(RAYON_LABELS[b] || b, "fr"));
+  const withMacros = cat.products.filter((p) => p.macros && (!rayon || p.rayon === rayon)).length;
+  const count = hits.length.toLocaleString("fr-FR");
+  const more = hits.length > 60 ? " — 60 premiers affichés" : "";
   return `<a class="back" href="#/">← Recettes</a>
     <div class="page-head"><h1>Produits du Drive</h1></div>
     <div class="toolbar">
-      <input id="product-search" class="search" type="search" data-action="product-query" placeholder="Skyr, thon, flocons d'avoine…" value="${esc(q)}" autocomplete="off" aria-label="Rechercher un produit">
-      <div class="chips" role="group" aria-label="Trier">${[["pertinence", "Pertinence"], ["prix-kg", "Prix au kilo"], ["proteines-euro", "Protéines par euro"], ["proteines", "Protéines / 100 g"]]
+      <input id="product-search" class="search" type="search" data-action="product-query" placeholder="Skyr, thon, flocons d'avoine… ou choisissez un tri" value="${esc(q)}" autocomplete="off" aria-label="Rechercher un produit">
+      <div class="chips" role="group" aria-label="Trier">${PRODUCT_SORTS.filter(([v]) => searching || v !== "pertinence")
         .map(([v, l]) => `<button class="chip" data-action="product-sort" data-sort="${v}" aria-pressed="${sort === v}">${l}</button>`).join("")}</div>
+      <select class="rank-select" data-action="product-rayon" aria-label="Rayon">
+        <option value="">Tous les rayons</option>
+        ${rayons.map((r) => `<option value="${esc(r)}"${r === rayon ? " selected" : ""}>${esc(RAYON_LABELS[r] || r)}</option>`).join("")}
+      </select>
     </div>
-    <p class="muted">${q ? `${hits.length.toLocaleString("fr-FR")} produits${hits.length > 60 ? " — 60 premiers affichés" : ""}` : `${cat.products.length.toLocaleString("fr-FR")} produits relevés au ${esc(cat.magasin.nom)}.`}</p>
+    <p class="muted">${searching ? `${count} produits${more}`
+      : sort !== "pertinence" ? `${count} produits${rayon ? ` du rayon ${esc(RAYON_LABELS[rayon] || rayon)}` : ""} classés par ${esc(PRODUCT_SORTS.find(([v]) => v === sort)[1].toLowerCase())}${more}.
+        ${sort === "prix-kg" ? "" : `Seuls les ${withMacros.toLocaleString("fr-FR")} produits dont les valeurs nutritionnelles sont connues sont classés ; le relevé hebdomadaire en ajoute chaque semaine.`}`
+      : `${cat.products.length.toLocaleString("fr-FR")} produits relevés au ${esc(cat.magasin.nom)}. Recherchez un produit, ou choisissez un tri pour parcourir tout le catalogue.`}</p>
     <div class="products">${hits.slice(0, 60).map((p) => {
       const m = p.macros;
       const ppe = C.proteinPerEuro(p);
+      const density = C.proteinPer100kcal(p);
       return `<article class="product">
         ${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" width="56" height="56">` : "<span></span>"}
         <div><h3>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.nom)}</a>` : esc(p.nom)}</h3>
           <div><strong>${euro(p.prix)}</strong> <span class="muted">${esc(unitLabel(p))}</span></div>
           <div class="muted" style="font-size:.8rem">${esc(p.conditionnement)}${p.promo ? ` · <span style="color:var(--brand);font-weight:800">${esc(p.promo)}</span>` : ""}</div></div>
-        <div class="nutri">${m ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span>${ppe > 0 ? `<span>${num(ppe)} g prot./€</span>` : ""}` : "<span>macros non renseignées</span>"}<span>/ 100 g</span></div>
+        <div class="nutri">${m ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span><span>/ 100 g</span>
+          ${density > 0 ? `<span class="ratio" title="Grammes de protéines pour 100 kcal">${num(density, 1)} g prot. / 100 kcal</span>` : ""}
+          ${ppe > 0 ? `<span>${num(ppe)} g prot. / €</span>` : ""}` : "<span>macros non renseignées</span>"}</div>
       </article>`;
     }).join("")}</div>`;
 }
@@ -1002,6 +1030,9 @@ document.addEventListener("change", (e) => {
     render({ keepScroll: true });
   } else if (el.dataset.action === "member-dislike") {
     if (el.value) toggleMemberPref(el.dataset.id, "deteste", el.value);
+    render({ keepScroll: true });
+  } else if (el.dataset.action === "product-rayon") {
+    ui.productRayon = el.value;
     render({ keepScroll: true });
   } else if (el.dataset.action === "rank-for") {
     state.rankFor = el.value;
