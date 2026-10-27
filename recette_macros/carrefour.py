@@ -39,9 +39,15 @@ class Product:
         return self.price / self.unit_price
 
 
+def _parse_number(text: str) -> float:
+    """'1,35' -> 1.35 ; '1.500.00' (séparateur de milliers) -> 1500.0"""
+    parts = re.split(r"[.,]", text)
+    return float("".join(parts[:-1]) + "." + parts[-1]) if len(parts) > 1 else float(text)
+
+
 def _parse_euros(text: str) -> float | None:
-    m = re.search(r"(\d+(?:[.,]\d+)?)", text.replace(" ", ""))
-    return float(m.group(1).replace(",", ".")) if m else None
+    m = re.search(r"\d[\d.,]*", text.replace(" ", ""))
+    return _parse_number(m.group(0).rstrip(".,")) if m else None
 
 
 def parse_search_html(html: str) -> list[Product]:
@@ -65,7 +71,7 @@ def parse_search_html(html: str) -> list[Product]:
         if per_unit:
             m = re.match(r"\s*([\d.,]+)\s*€\s*/\s*(\w+)", per_unit.get_text())
             if m:
-                unit_price, unit = float(m.group(1).replace(",", ".")), m.group(2).upper()
+                unit_price, unit = _parse_number(m.group(1).rstrip(".,")), m.group(2).upper()
 
         brand = card.select_one('[class*="__brand"]')
         link = card.select_one('a[href*="/p/"]')

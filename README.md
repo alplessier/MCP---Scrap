@@ -1,87 +1,96 @@
-# MCP---Scrap — Mode libre recette + macros
+# MCP---Scrap — Recettes & macros au Drive Carrefour Jaude
 
-Saisissez une recette en texte libre. L'outil :
+Un site pour chiffrer ses recettes **en euros et en macros**, avec les prix du
+*Drive Market Clermont-Ferrand Jaude*.
 
-1. cherche chaque ingrédient sur **carrefour.fr**, aux prix de **votre magasin** (par défaut le
-   *Drive Market Clermont-Ferrand Jaude*), grâce à [Firecrawl](https://firecrawl.dev) ;
-2. récupère les **macros** du produit choisi sur [Open Food Facts](https://world.openfoodfacts.org)
-   à partir de son code-barres (une table générique Ciqual sert de secours) ;
-3. calcule le **coût** (quantité utilisée et paquets à acheter) et les **macros**, au total et par portion.
+- **Relevé une fois par semaine**, pas à chaque recherche : chaque lundi, GitHub Actions relève les
+  ~12 000 produits alimentaires du Drive avec [Firecrawl](https://firecrawl.dev) (environ **12 crédits
+  par semaine**, un par rayon), puis enregistre le résultat dans `data/`.
+- **Macros récupérées une seule fois** : seuls les produits **nouveaux** sont interrogés sur
+  [Open Food Facts](https://world.openfoodfacts.org) (gratuit). Les produits encore sans fiche sont
+  retentés toutes les 4 semaines.
+- **Site statique** : tous les calculs se font dans le navigateur, à partir du dernier relevé.
+  Une recherche ne coûte rien et ne fait aucun appel à Carrefour.
 
-```
-Ingrédient                   Produit Carrefour                              Coût   kcal      P      G      L
-------------------------------------------------------------------------------------------------------------
-300 g filet de poulet        Filets de Poulet SIMPL'                      3,06 €    345   72.0    0.0    6.0 *
-150 g riz basmati            Riz Basmati Long CARREFOUR EXTRA             0,39 €    524   12.9  115.5    1.4
-200 g brocolis               Brocoli coupé SIMPL                          0,40 €     68    4.8    7.0    0.0
-10 ml huile d'olive          Huile d'Olive Vierge Extra CARREFOUR EXTRA   0,08 €     82    0.0    0.0    9.1
-------------------------------------------------------------------------------------------------------------
-TOTAL                                                                     3,92 €   1019   89.7  122.5   16.4
-PAR PORTION (÷2)                                                          1,96 €    509   44.9   61.2    8.2
-```
+## Le site
 
-## Installation
+| Onglet | Contenu |
+|---|---|
+| **Recette** | Mode libre : un ingrédient par ligne (`300 g filet de poulet`, `2 oeufs @60g`…). Pour chaque ligne, le produit choisi (modifiable), son coût et ses macros, puis le coût, les kcal et les macros **par portion**, et le prix des paquets entiers à acheter. |
+| **Produits** | Recherche dans le catalogue, triable par prix au kilo ou par **grammes de protéines par euro**. |
+| **Mes recettes** | Recettes enregistrées dans le navigateur, recalculées avec les prix de la semaine. Le bouton « Copier le lien » partage une recette. |
 
-```bash
-pip install -r requirements.txt
-export FIRECRAWL_API_KEY=fc-...
-```
-
-## Utilisation
-
-```bash
-# Mode libre interactif : on tape les ingrédients, puis on choisit le produit pour chacun
-python -m recette_macros
-
-# En une commande, avec choix automatique du produit
-python -m recette_macros -p 2 --auto moins-cher \
-  -i "300 g filet de poulet" -i "150 g riz basmati" -i "200 g brocolis" -i "10 ml huile d'olive"
-
-# Depuis un fichier
-python -m recette_macros -f exemples/poulet_riz_brocolis.txt -p 2
-
-# Juste les prix d'un produit dans votre magasin
-python -m recette_macros --chercher "skyr"
-```
-
-Format d'une ligne d'ingrédient :
+### Format d'une ligne d'ingrédient
 
 | Exemple | Signification |
 |---|---|
 | `200 g blanc de poulet` | quantité en `g`, `kg`, `ml`, `cl` ou `l` (1 ml est compté comme 1 g pour les macros) |
 | `2 oeufs @60g` | pièces, avec le poids d'une pièce (nécessaire pour les macros) |
-| `3 avocats` | pièces : le prix est calculé si Carrefour vend le produit à la pièce |
+| `3 avocats` | pièces : le prix est calculé si le produit est vendu à la pièce |
 | `100 g skyr #3560070945252` | impose un produit précis par son code-barres |
 
-Les lignes commençant par `//` sont des commentaires.
+## Mise en ligne (une seule fois)
 
-Options utiles : `--auto pertinence|moins-cher` (sans ce choix, le produit est demandé pour chaque
-ingrédient), `--top N` (nombre de produits proposés), `--json` (sortie machine),
-`--magasin REF` (autre magasin), `--rafraichir` (ignore le cache des prix).
+1. **Clé Firecrawl** : *Settings → Secrets and variables → Actions → New repository secret*,
+   nom `FIRECRAWL_API_KEY`.
+2. **GitHub Pages** : *Settings → Pages → Source : GitHub Actions*.
+   Sur un dépôt **privé**, Pages demande un compte GitHub Pro. Sinon, rendez le dépôt public :
+   il ne contient aucun secret, la clé reste dans les secrets GitHub.
+3. Fusionnez sur `main`, puis lancez le workflow une première fois :
+   *Actions → Relevé hebdomadaire et site → Run workflow*. Le tout premier relevé des macros
+   prend environ 1 h (Open Food Facts limite le débit) ; les suivants, quelques minutes.
 
-## Changer de magasin
+Ensuite, tout est automatique chaque lundi matin.
 
-La référence du magasin figure dans le HTML de sa page Drive (`/set-store/<ref>`). Pour le
-Drive Jaude, c'est `575`. Pour un autre magasin, passez `--magasin <ref>` ou définissez la
-variable `CARREFOUR_STORE`. L'outil vérifie que Carrefour a bien appliqué ce magasin et
-s'arrête sinon, plutôt que de renvoyer les prix d'un autre magasin.
+## Fichiers de données
 
-## Crédits Firecrawl et cache
+| Fichier | Contenu |
+|---|---|
+| `data/produits.json` | État actuel du catalogue, un produit par ligne : chaque commit hebdomadaire ne montre que ce qui a changé. |
+| `data/historique_prix.csv` | Une ligne par **changement** de prix (date, code-barres, prix). |
+| `data/nutrition.json` | Macros pour 100 g par code-barres, complétées seulement pour les nouveaux produits. |
 
-- Une recherche de produit coûte quelques crédits Firecrawl (navigation avec choix du magasin).
-- Une fiche Open Food Facts est récupérée en direct, gratuitement ; Firecrawl (1 crédit) ne sert
-  qu'en secours si l'accès direct échoue.
-- Les prix sont gardés en cache **7 jours** et les macros **90 jours** dans
-  `~/.cache/recette_macros/` (modifiable avec `RECETTE_MACROS_CACHE`).
+## En local
+
+```bash
+pip install -r requirements.txt
+
+# Site : construit site/data/catalogue.json, puis le sert en local
+python -m recette_macros.site && python -m http.server -d site 8000
+
+# Ligne de commande (utilise le dernier relevé, sans frais)
+python -m recette_macros -p 2 --auto moins-cher -i "300 g filet de poulet" -i "150 g riz basmati"
+python -m recette_macros --chercher "skyr"
+
+# Relevé manuel (consomme des crédits Firecrawl)
+export FIRECRAWL_API_KEY=fc-...
+python -m recette_macros.update                         # tous les rayons
+python -m recette_macros.update --rayons cremerie       # un seul rayon, les autres sont conservés
+```
+
+`--live` sur la ligne de commande interroge carrefour.fr en direct (payant) au lieu du relevé.
+
+## Comment fonctionne le relevé
+
+Pour chaque rayon, une seule session Firecrawl :
+
+1. ouvre `https://www.carrefour.fr/set-store/575`, ce qui choisit le Drive Jaude ;
+2. ouvre le rayon `/r/<rayon>` ;
+3. lit toutes ses pages via l'API JSON qu'utilise le site Carrefour lui-même (prix, prix au kilo
+   et promos propres au magasin).
+
+Les produits « marketplace » (vendeurs tiers, absents du Drive) sont écartés. Un rayon en échec est
+retenté une fois, puis garde ses produits de la semaine précédente.
+
+Pour changer de magasin, trouvez sa référence dans le HTML de sa page Drive (`/set-store/<ref>`)
+et passez `--magasin <ref>` (ou la variable `CARREFOUR_STORE`).
 
 ## Limites
 
-- Les macros sont celles du produit **tel que vendu** : comptez le riz et les pâtes en poids sec.
+- Macros du produit **tel que vendu** : comptez le riz et les pâtes en poids sec.
 - Les valeurs marquées `*` viennent d'une table générique approximative (produit sans fiche Open Food Facts).
-- Les promos « Mardi PASS » et les remises fidélité ne sont pas déduites ; elles sont signalées
-  lors du choix du produit.
-- Le scraping dépend de la structure HTML de carrefour.fr et peut casser si le site change.
-  Usage personnel uniquement.
+- Les promos « Mardi PASS » et les remises fidélité sont signalées mais pas déduites.
+- Le relevé dépend de la structure de carrefour.fr et peut casser si le site change. Usage personnel uniquement.
 
 ## Tests
 

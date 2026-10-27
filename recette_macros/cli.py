@@ -6,6 +6,7 @@ import sys
 from dataclasses import asdict
 
 from .carrefour import DEFAULT_STORE_REF, CarrefourClient, Product
+from .catalogue import DATA_DIR, LocalCatalogue
 from .nutrition import NutritionClient
 from .recipe import Ingredient, RecipeResult, choose_product, cost_line, is_usable, parse_line, parse_recipe
 from .text import matches
@@ -113,11 +114,17 @@ def main(argv=None) -> int:
                     help="choix automatique du produit (sinon, choix interactif)")
     ap.add_argument("--top", type=int, default=5, help="nombre de produits proposés par ingrédient")
     ap.add_argument("--magasin", default=DEFAULT_STORE_REF, help="référence Carrefour du magasin (575 = Drive Jaude)")
-    ap.add_argument("--rafraichir", action="store_true", help="ignore le cache des prix")
+    ap.add_argument("--live", action="store_true",
+                    help="interroge carrefour.fr via Firecrawl (payant) au lieu du dernier relevé hebdomadaire")
+    ap.add_argument("--rafraichir", action="store_true", help="avec --live : ignore le cache des prix")
     ap.add_argument("--json", action="store_true", help="sortie JSON")
     args = ap.parse_args(argv)
 
-    carrefour = CarrefourClient(args.magasin)
+    if args.live or not (DATA_DIR / "produits.json").exists():
+        carrefour = CarrefourClient(args.magasin)
+    else:
+        carrefour = LocalCatalogue(DATA_DIR)
+        print(f"(catalogue du relevé du {carrefour.maj} — --live pour interroger carrefour.fr)", file=sys.stderr)
 
     if args.chercher:
         products = carrefour.search(args.chercher, refresh=args.rafraichir)
@@ -147,7 +154,7 @@ def main(argv=None) -> int:
             portions = int(answer) if answer.isdigit() and int(answer) > 0 else 1
 
     interactive = args.auto is None and sys.stdin.isatty()
-    result = compute(ingredients, portions, carrefour, NutritionClient(), args.auto or "pertinence",
+    result = compute(ingredients, portions, carrefour, NutritionClient(DATA_DIR), args.auto or "pertinence",
                      interactive, args.top, args.rafraichir)
 
     if args.json:

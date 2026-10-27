@@ -1,0 +1,84 @@
+name: Relevé hebdomadaire et site
+
+on:
+  schedule:
+    # Chaque lundi à 04:17 UTC (06:17 à Paris en été, 05:17 en hiver)
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      rayons:
+        description: "Rayons à relever, séparés par des espaces (vide = tous)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: ["site/**", "recette_macros/site.py", "data/**"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: releve-et-site
+  cancel-in-progress: false
+
+jobs:
+  releve:
+    # Le relevé (qui consomme des crédits Firecrawl) ne tourne que le lundi ou à la demande
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150  # le tout premier relevé des macros prend ~1 h, les suivants quelques minutes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Relevé Carrefour Drive Jaude + macros des nouveaux produits
+        env:
+          FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+          RAYONS: ${{ github.event.inputs.rayons }}
+        run: |
+          if [ -n "$RAYONS" ]; then
+            # shellcheck disable=SC2086 # découpage voulu : un argument par rayon
+            python -m recette_macros.update --rayons $RAYONS
+          else
+            python -m recette_macros.update
+          fi
+      - name: Enregistre les données dans le dépôt
+        run: |
+          git config user.name "releve-hebdo[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Aucun changement."
+          else
+            git commit -m "Relevé du $(date +%F)"
+            git push
+          fi
+
+  site:
+    needs: releve
+    # Après le relevé, ou directement quand le site change sur main
+    if: always() && (needs.releve.result == 'success' || needs.releve.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}  # pour récupérer le commit de données du job précédent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m recette_macros.site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

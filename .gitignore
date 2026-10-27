@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+# généré par python -m recette_macros.site (dans le workflow avant le déploiement)
+site/data/

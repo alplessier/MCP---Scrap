@@ -1,17 +1,31 @@
-"""Valeurs nutritionnelles (pour 100 g) via l'API Open Food Facts, à partir du code-barres."""
+"""Valeurs nutritionnelles (pour 100 g) via l'API Open Food Facts, à partir du code-barres.
+
+Les valeurs sont stockées dans data/nutrition.json. Le relevé hebdomadaire n'interroge
+Open Food Facts que pour les produits nouveaux, et retente de temps en temps ceux qui
+n'avaient pas encore de fiche.
+"""
 
 import json
 import os
+import time
 from dataclasses import dataclass
+from datetime import date, timedelta
+from pathlib import Path
 
 import requests
 
 from .cache import JsonCache
 from .text import matches
 
-OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{ean}.json?fields=product_name,nutriments"
+OFF_PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product/{ean}.json?fields=product_name,nutriments"
+OFF_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search?code={codes}&fields=code,nutriments&page_size=50"
 USER_AGENT = "recette-macros/0.1 (https://github.com/alplessier/MCP---Scrap)"
 NUTRITION_TTL = 90 * 24 * 3600
+BATCH_SIZE = 25  # au-delà, Open Food Facts répond souvent 503
+SEARCH_DELAY = 6.5  # Open Food Facts limite la recherche à 10 requêtes par minute
+PRODUCT_DELAY = 0.65  # ... et la lecture d'une fiche à 100 requêtes par minute
+TIME_BUDGET = float(os.environ.get("NUTRITION_BUDGET_MIN", 100)) * 60  # le reste attend le relevé suivant
+RETRY_MISSING_AFTER = timedelta(days=28)
 
 
 @dataclass
@@ -77,47 +91,126 @@ def generic_per_100g(ingredient_name: str) -> Macros | None:
     return next((m for key, m in GENERIC_PER_100G.items() if matches(key, ingredient_name)), None)
 
 
+def macros_from_nutriments(n: dict) -> Macros | None:
+    if "proteins_100g" not in n and "energy-kcal_100g" not in n:
+        return None
+    m = Macros(
+        kcal=float(n.get("energy-kcal_100g") or 0),
+        proteines=float(n.get("proteins_100g") or 0),
+        glucides=float(n.get("carbohydrates_100g") or 0),
+        lipides=float(n.get("fat_100g") or 0),
+    )
+    # Certaines fiches ont 0 kcal mais des macros renseignées : on recalcule (Atwater 4/4/9).
+    if m.kcal == 0 and (m.proteines or m.glucides or m.lipides):
+        m.kcal = round(4 * m.proteines + 4 * m.glucides + 9 * m.lipides)
+    return m
+
+
 def macros_from_off(payload: dict) -> Macros | None:
     if payload.get("status") != 1:
         return None
-    n = payload.get("product", {}).get("nutriments", {})
-    if "energy-kcal_100g" not in n and "proteins_100g" not in n:
-        return None
-    return Macros(
-        kcal=float(n.get("energy-kcal_100g", 0)),
-        proteines=float(n.get("proteins_100g", 0)),
-        glucides=float(n.get("carbohydrates_100g", 0)),
-        lipides=float(n.get("fat_100g", 0)),
-    )
+    return macros_from_nutriments(payload.get("product", {}).get("nutriments", {}))
+
+
+def _get_json(url: str, firecrawl=None) -> dict:
+    """Open Food Facts en direct ; Firecrawl (1 crédit) seulement si l'accès direct est bloqué."""
+    try:
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+        if r.status_code == 404:
+            return {"status": 0}  # produit inconnu d'Open Food Facts
+        r.raise_for_status()
+        return r.json()
+    except requests.RequestException:
+        if firecrawl is None:
+            raise
+    doc = firecrawl.scrape(url, formats=["rawHtml"], max_age=0)
+    if doc.metadata and doc.metadata.status_code == 404:
+        return {"status": 0}
+    if doc.metadata and doc.metadata.status_code != 200:
+        raise RuntimeError(f"Open Food Facts a répondu {doc.metadata.status_code}")
+    return json.loads(doc.raw_html)
+
+
+def fetch_batch(eans: list[str], firecrawl=None) -> dict[str, Macros | None]:
+    payload = _get_json(OFF_SEARCH_URL.format(codes=",".join(eans)), firecrawl)
+    found = {p["code"]: macros_from_nutriments(p.get("nutriments") or {}) for p in payload.get("products", [])}
+    return {ean: found.get(ean) for ean in eans}
+
+
+def fetch_one_by_one(eans: list[str], firecrawl=None) -> dict[str, Macros | None]:
+    """Repli quand la recherche groupée échoue (Open Food Facts répond parfois 503) ; les échecs sont omis."""
+    results = {}
+    for ean in eans:
+        try:
+            results[ean] = macros_from_off(_get_json(OFF_PRODUCT_URL.format(ean=ean), firecrawl))
+        except Exception:
+            pass
+        time.sleep(PRODUCT_DELAY)
+    return results
+
+
+def eans_to_fetch(eans, known: dict, today: date) -> list[str]:
+    """Produits jamais vus, et produits sans fiche vérifiés il y a plus de RETRY_MISSING_AFTER."""
+    todo = []
+    for ean in eans:
+        entry = known.get(ean)
+        if entry is None:
+            todo.append(ean)
+        elif entry["m"] is None and today - date.fromisoformat(entry["vu"]) >= RETRY_MISSING_AFTER:
+            todo.append(ean)
+    return todo
+
+
+def update_nutrition(data_dir: Path, firecrawl=None, log=print, time_budget: float = TIME_BUDGET) -> dict:
+    path = data_dir / "nutrition.json"
+    known = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    catalogue = json.loads((data_dir / "produits.json").read_text(encoding="utf-8"))["produits"]
+    today = date.today()
+    todo = eans_to_fetch([p["ean"] for p in catalogue], known, today)
+    log(f"Nutrition : {len(todo)} produits à interroger sur Open Food Facts ({len(known)} déjà connus)")
+    found = done = 0
+    deadline = time.monotonic() + time_budget
+    for i in range(0, len(todo), BATCH_SIZE):
+        if time.monotonic() > deadline:
+            log(f"  budget de temps atteint : {len(todo) - i} produits restants, traités au prochain relevé")
+            break
+        batch = todo[i:i + BATCH_SIZE]
+        try:
+            results = fetch_batch(batch, firecrawl)
+        except Exception as e:
+            log(f"  lot {i // BATCH_SIZE + 1} en échec ({e}) : interrogation produit par produit")
+            results = fetch_one_by_one(batch, firecrawl)
+        for ean, m in results.items():
+            known[ean] = {"m": list(m.as_tuple()) if m else None, "vu": today.isoformat()}
+            found += m is not None
+            done += 1
+        # enregistré à chaque lot : un relevé interrompu ne perd pas ce qui est déjà fait
+        path.write_text(json.dumps(known, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+        time.sleep(SEARCH_DELAY)
+    log(f"Nutrition : {done} produits interrogés, {found} fiches trouvées")
+    return {"interroges": done, "trouves": found}
 
 
 class NutritionClient:
-    """Interroge Open Food Facts en direct, et passe par Firecrawl si l'accès direct échoue."""
+    """Macros d'un produit : data/nutrition.json d'abord, sinon Open Food Facts (mis en cache)."""
 
-    def __init__(self, firecrawl=None, use_firecrawl_fallback: bool = True):
+    def __init__(self, data_dir: Path | None = None, firecrawl=None):
         self._firecrawl = firecrawl
-        self.use_firecrawl_fallback = use_firecrawl_fallback
         self._cache = JsonCache("nutrition", NUTRITION_TTL)
-
-    def _fetch(self, ean: str) -> dict:
-        url = OFF_URL.format(ean=ean)
-        try:
-            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-            r.raise_for_status()
-            return r.json()
-        except requests.RequestException:
-            if not self.use_firecrawl_fallback:
-                raise
-        if self._firecrawl is None:
-            from firecrawl import Firecrawl
-
-            self._firecrawl = Firecrawl(api_key=os.environ["FIRECRAWL_API_KEY"])
-        return json.loads(self._firecrawl.scrape(url, formats=["rawHtml"]).raw_html)
+        self._local = {}
+        if data_dir and (data_dir / "nutrition.json").exists():
+            self._local = json.loads((data_dir / "nutrition.json").read_text(encoding="utf-8"))
 
     def per_100g(self, ean: str) -> Macros | None:
+        if ean in self._local and self._local[ean]["m"]:
+            return Macros(*self._local[ean]["m"])
         cached = self._cache.get(ean)
         if cached is not None:
             return Macros(**cached) if cached else None
-        macros = macros_from_off(self._fetch(ean))
+        if self._firecrawl is None and os.environ.get("FIRECRAWL_API_KEY"):
+            from firecrawl import Firecrawl
+
+            self._firecrawl = Firecrawl(api_key=os.environ["FIRECRAWL_API_KEY"])
+        macros = macros_from_off(_get_json(OFF_PRODUCT_URL.format(ean=ean), self._firecrawl))
         self._cache.set(ean, macros.__dict__ if macros else {})
         return macros
