@@ -16,21 +16,34 @@ const PERSO_COLORS = ["#ffe5df", "#e3f4dc", "#e7e2fb", "#fff1c7", "#dcecf7"];
 
 // ---------- État (enregistré dans le navigateur) ----------
 // menu : { id → { p: couverts, t: taille de portion } } ; pins : { clé d'ingrédient → EAN }
+// members : les personnes du foyer (besoins + préférences) ; foyer : budget, temps et matériel communs
 
+const DEFAULT_PREFS = { allergies: [], regimes: ["aucun"], petitdej: "les-deux", deteste: [] };
+const AVATARS = ["🙂", "😎", "🧔", "👩", "👨", "🧒", "👧", "👦", "👵", "👴", "🏋️", "🧘"];
 const state = loadState();
 let cat = null;
 let book = { tags: {}, recettes: [], byId: new Map() };
-const ui = { tag: null, query: "", view: {}, cookStep: 0 };
+const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false };
 
 function loadState() {
-  const base = { menu: {}, pins: {}, owned: [], profile: null, custom: [], strategy: "pertinence" };
+  const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null,
+    custom: [], strategy: "pertinence" };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
-    if (saved) return { ...base, ...saved };
+    if (saved) {
+      const st = { ...base, ...saved, foyer: { ...base.foyer, ...(saved.foyer || {}) } };
+      // version précédente : un seul profil → il devient le premier membre du foyer
+      if (st.profile && !st.members.length) st.members = [newMember({ ...st.profile, nom: "Moi" })];
+      delete st.profile;
+      st.members = st.members.map((m) => newMember(m));
+      if (!st.members.length) st.members = [newMember()];
+      return st;
+    }
     // anciennes recettes du mode libre (première version du site)
     const old = JSON.parse(localStorage.getItem(OLD_SAVED_KEY)) || [];
     base.custom = old.map((r, i) => customFromText(r.nom, r.portions, r.texte, i));
   } catch { /* stockage indisponible : on garde l'état vide */ }
+  base.members = [newMember()];
   return base;
 }
 function save() {
@@ -70,13 +83,37 @@ function toast(msg) {
 }
 
 function allRecipes() { return [...state.custom, ...book.recettes]; }
+
+// ---------- Foyer ----------
+
+function newMember(fields = {}) {
+  return {
+    id: `m-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, nom: "Moi", emoji: "🙂",
+    sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3, present: true,
+    ...fields, prefs: { ...DEFAULT_PREFS, ...(fields.prefs || {}) },
+  };
+}
+const present = () => state.members.filter((m) => m.present);
+// la personne pour qui l'accueil classe les recettes (« Le top 3 pour … »)
+function me() { return state.members.find((m) => m.id === state.rankFor && m.present) || present()[0] || null; }
+function householdSize() { return Math.max(1, present().length); }
+function prefs() { return C.householdPrefs(present(), state.foyer); }
+
+const traitsCache = new Map();
+function traitsOf(r) {
+  const key = `${r.id}|${r.ingredients.join("\n")}|${(r.etapes || []).join("\n")}`;
+  if (!traitsCache.has(key)) traitsCache.set(key, C.recipeTraits(r));
+  return traitsCache.get(key);
+}
+const compatOf = (r) => C.recipeCompat(r, prefs(), traitsOf(r));
+function clearScores() { scoreCache.clear(); }
 function recipeById(id) { return state.custom.find((r) => r.id === id) || book.byId.get(id); }
 
 // ---------- Calculs ----------
 
-function targets() {
-  const daily = state.profile ? C.dailyTargets(state.profile) : null;
-  return { daily, meal: daily ? C.mealTarget(daily, state.profile.repas || 3) : null };
+function targets(member = me()) {
+  const daily = member ? C.dailyTargets(member) : null;
+  return { daily, meal: daily ? C.mealTarget(daily, member.repas || 3) : null };
 }
 
 // Couverts et taille de portion : ceux du menu si la recette y est, sinon ceux de la fiche
@@ -112,16 +149,25 @@ const eligibleForTop = (r, filter) => MEAL_ONLY_EXCLUDES.includes(filter) || !(r
 // Filtres présentés dans « Le top 3 pour vous », dans cet ordre
 const TOP_FILTERS = ["seche", "masse", "gourmand", "petit-dej", "collation", "meal-prep", "vegetarien"];
 const MEDALS = ["🥇", "🥈", "🥉"];
+const FLAG_LABELS = { budget: "💶 au-dessus du budget", temps: "⏱ un peu long", sucre: "🍯 petit-déj sucré", sale: "🧂 petit-déj salé" };
 
 const scoreCache = new Map();
+// Note de la recette pour la personne classée, ajustée au budget, au temps et au petit-déj préféré
 function scoreOf(r) {
-  const { daily } = targets();
+  const m = me();
+  const { daily } = targets(m);
   if (!daily) return null;
-  const key = `${r.id}|${r.ingredients.join("\n")}|${JSON.stringify(state.profile)}|${state.strategy}`;
+  const key = `${r.id}|${r.ingredients.join("\n")}|${m.id}|${state.strategy}`;
   if (!scoreCache.has(key)) {
-    scoreCache.set(key, C.recipeScore(stats(r), {
-      daily, meals: state.profile.repas || 3, goal: state.profile.objectif, snack: isSnack(r),
-    }));
+    const base = C.recipeScore(stats(r), { daily, meals: m.repas || 3, goal: m.objectif, snack: isSnack(r) });
+    const pen = C.budgetTimePenalty(stats(r).cost * base.size, r.temps, prefs(), m.repas || 3);
+    let factor = pen.factor;
+    const pd = m.prefs.petitdej;
+    if ((r.tags || []).includes("petit-dej") && pd !== "les-deux" && traitsOf(r).sweet !== (pd === "sucre")) {
+      factor *= 0.7;
+      pen.flags.push(pd === "sucre" ? "sale" : "sucre");
+    }
+    scoreCache.set(key, { ...base, score: Math.round(base.score * factor), flags: pen.flags });
   }
   return scoreCache.get(key);
 }
@@ -152,13 +198,14 @@ function cardHtml(r, meal, rank = null) {
     <a href="#/recette/${encodeURIComponent(r.id)}" style="color:inherit;text-decoration:none;display:contents">
       ${tileHtml(r)}
       <div class="card-body">
-        <div class="card-title">${esc(r.nom)}</div>
+        <div class="card-title">${compatOf(r).ok ? "" : `<span title="${esc(compatOf(r).reasons.join(", "))}">⚠️ </span>`}${esc(r.nom)}</div>
         <div class="card-meta">
           ${r.temps ? `<span>⏱ ${r.temps} min</span>` : ""}
           <span>${euro(s.cost)}/pers.</span>
         </div>
         <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span></div>
         <div class="card-meta">${sc ? `<span class="score" title="Pertinence pour votre objectif">🎯 ${sc.score}/100</span>` : ""}${fitLabel(r, s.macros[0], meal)}</div>
+        ${sc && sc.flags.length ? `<div class="card-meta flags">${sc.flags.map((f) => `<span>${FLAG_LABELS[f]}</span>`).join("")}</div>` : ""}
       </div>
     </a>
   </article>`;
@@ -205,7 +252,11 @@ function ingredientsHtml(lines) {
 function viewRecipes() {
   const { daily, meal } = targets();
   const q = C.queryTokens(ui.query);
-  const list = allRecipes().filter((r) => {
+  const m = me();
+  // recettes incompatibles avec le foyer (allergies, régimes, ingrédients détestés, matériel) : masquées
+  const compatible = allRecipes().filter((r) => compatOf(r).ok);
+  const hidden = allRecipes().length - compatible.length;
+  const list = (ui.showAll ? allRecipes() : compatible).filter((r) => {
     if (ui.tag && !(r.tags || []).includes(ui.tag)) return false;
     if (!q.length) return true;
     const w = C.words(`${r.nom} ${r.ingredients.join(" ")} ${(r.tags || []).map((t) => book.tags[t] || t).join(" ")}`);
@@ -218,7 +269,8 @@ function viewRecipes() {
   }
   const showTops = daily && !ui.tag && !q.length;
   const tops = showTops ? TOP_FILTERS.map((t) => {
-    const best = allRecipes().filter((r) => (r.tags || []).includes(t) && eligibleForTop(r, t)).sort(byScore).slice(0, 3);
+    const best = compatible.filter((r) => (r.tags || []).includes(t) && eligibleForTop(r, t)).sort(byScore).slice(0, 3);
+    if (!best.length) return "";
     return `<div class="top-row">
       <div class="top-head"><h3>${esc(book.tags[t])}</h3><button class="link-btn" data-action="tag" data-tag="${esc(t)}">Tout voir →</button></div>
       <div class="top-cards">${best.map((r, i) => cardHtml(r, meal, i)).join("")}</div>
@@ -230,8 +282,8 @@ function viewRecipes() {
         <h1>On mange quoi ce soir ?</h1>
         <p>Des recettes pensées pour vos objectifs, au prix du Drive Jaude, et votre panier rempli en un clic.</p>
         ${daily
-          ? `<a class="goal-pill" href="#/profil">🎯 ${C.GOALS[state.profile.objectif]?.label || "Objectif"} · ${num(daily.kcal)} kcal · ${num(daily.proteines)} g de protéines / jour</a>`
-          : `<a class="goal-pill" href="#/profil">💪 Calculer mes besoins sportifs →</a>`}
+          ? `<a class="goal-pill" href="#/profil">${householdSize() > 1 ? `👥 Foyer de ${householdSize()} · ` : ""}🎯 ${esc(m.nom)} : ${C.GOALS[m.objectif]?.label || "Objectif"} · ${num(daily.kcal)} kcal · ${num(daily.proteines)} g de protéines / jour</a>`
+          : `<a class="goal-pill" href="#/profil">💪 Créer mon profil et calculer mes besoins →</a>`}
       </div>
       <div class="hero-art" aria-hidden="true">🥗</div>
     </section>
@@ -244,8 +296,12 @@ function viewRecipes() {
       </div>
     </div>
     ${showTops ? `<section class="for-you" aria-labelledby="for-you-title">
-      <h2 id="for-you-title">Le top 3 pour vous</h2>
-      <p class="muted">Classé pour votre objectif « ${esc(C.GOALS[state.profile.objectif]?.label || "")} » : protéines, portion adaptée à votre repas idéal, lipides et prix. <a href="#/profil">Modifier mon profil</a></p>
+      <div class="for-you-head">
+        <h2 id="for-you-title">Le top 3 pour ${present().length > 1 ? "" : "vous"}</h2>
+        ${present().length > 1 ? `<select class="rank-select" data-action="rank-for" aria-label="Classer les recettes pour">${present().map((x) =>
+          `<option value="${esc(x.id)}"${x.id === m.id ? " selected" : ""}>${esc(x.emoji)} ${esc(x.nom)}</option>`).join("")}</select>` : ""}
+      </div>
+      <p class="muted">Classé pour l'objectif « ${esc(C.GOALS[m.objectif]?.label || "")} » de ${esc(m.nom)} : protéines, portion adaptée au repas idéal, lipides et prix${prefs().budget || prefs().temps ? ", budget et temps" : ""}. Seules les recettes compatibles avec tout le foyer sont proposées. <a href="#/profil">Modifier le foyer</a></p>
       ${tops}
     </section><h2 class="all-title">Toutes les recettes</h2>` : ""}
     <div class="grid">
@@ -255,7 +311,10 @@ function viewRecipes() {
         <div class="card-body"><div class="card-title">Créer ma recette</div><div class="card-meta"><span>Mode libre : vos ingrédients, chiffrés au Drive</span></div></div>
       </a>
     </div>
-    ${list.length ? "" : `<div class="empty"><div class="big-emoji">🔍</div><p>Aucune recette ne correspond.</p></div>`}`;
+    ${list.length ? "" : `<div class="empty"><div class="big-emoji">🔍</div><p>Aucune recette ne correspond.</p></div>`}
+    ${hidden ? `<p class="muted hidden-note">${ui.showAll ? `Les ${hidden} recettes incompatibles avec votre foyer sont affichées (signalées par ⚠️).`
+      : `${hidden} recette${hidden > 1 ? "s masquées" : " masquée"} : incompatible${hidden > 1 ? "s" : ""} avec les allergies, régimes, ingrédients détestés ou le matériel de votre foyer.`}
+      <button class="link-btn" data-action="show-all">${ui.showAll ? "Les masquer" : "Les afficher"}</button></p>` : ""}`;
 }
 
 function viewRecipe(id) {
@@ -267,9 +326,16 @@ function viewRecipe(id) {
   const inMenu = !!state.menu[r.id];
   const per = res.perPortion;
   const kcalStd = stats(r).macros[0];
-  const adapt = meal && !isSnack(r) ? C.portionsForTarget(kcalStd, meal) : null;
+  const traits = traitsOf(r);
+  const compat = compatOf(r);
+  // portions de chaque membre présent, calées sur son repas idéal
+  const members = present().filter((x) => C.dailyTargets(x));
+  const portions = isSnack(r) ? [] : C.memberPortions(kcalStd, members);
+  const adapt = portions.length ? Math.round((portions.reduce((a, x) => a + x.size, 0) / portions.length) * 4) / 4 : null;
+  const people = Math.max(1, members.length);
+  const adapted = adapt !== null && s.t === adapt && s.p === people && !(adapt === 1 && people === r.portions);
   const light = meal && !isSnack(r) && C.tooLightForMeal(kcalStd, meal);
-  const adapted = adapt !== null && adapt !== 1 && s.t === adapt;
+  const solo = members.length <= 1;
   return `
     <a class="back" href="#/">← Recettes</a>
     <div class="detail">
@@ -285,17 +351,22 @@ function viewRecipe(id) {
         <div class="tags">${(r.tags || []).map((t) => `<span class="tag">${esc(book.tags[t] || (t === "perso" ? "Ma recette" : t))}</span>`).join("")}</div>
         <h1>${esc(r.nom)}</h1>
         <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(per.cost)} par personne · ${euro(res.cost)} au total</p>
+        ${compat.ok ? "" : `<div class="warning" role="note">⚠️ Pas adaptée à votre foyer : ${esc(compat.reasons.join(", "))}.</div>`}
+        <p class="traits">${traits.allergens.length ? `<span>Contient : ${esc(traits.allergens.map((a) => C.ALLERGENS[a].label.toLowerCase()).join(", "))}</span>` : `<span>Sans allergène majeur détecté</span>`}
+          ${traits.equipment.length ? `<span>Matériel : ${esc(traits.equipment.map((e) => C.EQUIPMENT[e].label.toLowerCase()).join(", "))}</span>` : `<span>Sans cuisson</span>`}</p>
         <div class="panel">
           <div class="row">
             ${stepperHtml("servings", r.id, portionsLabel(s.p))}
-            ${meal && isSnack(r) ? `<span class="fit">Collation : en plus de vos repas</span>`
-              : meal
-              ? (adapt === 1 && s.t === 1
-                ? `<span class="fit ok">✓ Portion idéale pour votre objectif</span>`
-                : `<button class="btn small" data-action="adapt" data-id="${esc(r.id)}" data-size="${adapted ? 1 : adapt}">${adapted ? "↺ Portion standard" : `🎯 Adapter à mon objectif (×${num(adapt, 2)})`}</button>`)
-              : `<a class="btn small" href="#/profil">🎯 Définir mon objectif</a>`}
+            ${isSnack(r) && meal ? `<span class="fit">Collation : en plus des repas</span>`
+              : adapt === null ? `<a class="btn small" href="#/profil">🎯 Définir les objectifs du foyer</a>`
+              : adapt === 1 && s.t === 1 && (solo || s.p === people) ? `<span class="fit ok">✓ Portion idéale ${solo ? "pour votre objectif" : "pour le foyer"}</span>`
+              : `<button class="btn small" data-action="adapt" data-id="${esc(r.id)}" data-size="${adapted ? 1 : adapt}" data-people="${adapted ? s.p : people}">${adapted ? "↺ Portion standard"
+                : solo ? `🎯 Adapter à mon objectif (×${num(adapt, 2)})` : `👥 Adapter au foyer (${people} pers.)`}</button>`}
           </div>
-          ${s.t !== 1 ? `<p class="hint">Portions ×${num(s.t, 2)}, adaptées à votre objectif.</p>` : ""}
+          ${s.t !== 1 ? `<p class="hint">Portions ×${num(s.t, 2)} en moyenne, adaptées ${solo ? "à votre objectif" : "aux objectifs du foyer"}.</p>` : ""}
+          ${!solo && portions.length ? `<ul class="per-member">${portions.map((x) => `<li><span>${esc(state.members.find((mm) => mm.id === x.id)?.emoji || "🙂")} ${esc(x.nom)}</span>
+            <span>portion ×${num(x.size, 2)} · ${num(kcalStd * x.size)} kcal · ${num(stats(r).macros[1] * x.size)} g prot.</span></li>`).join("")}</ul>
+            <p class="hint">Servez à chacun sa portion : les quantités et les courses couvrent tout le foyer.</p>` : ""}
           ${light ? `<p class="hint">Même doublée, cette recette reste légère pour votre objectif : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
           <div class="kpis">
             <div class="kpi"><b>${num(per.macros[0])}</b><span>kcal / portion</span></div>
@@ -303,7 +374,7 @@ function viewRecipe(id) {
             <div class="kpi"><b>${euro(per.cost)}</b><span>par personne</span></div>
           </div>
           ${macroBars(per.macros, meal)}
-          ${meal ? `<p class="hint">Barres : part d'un repas idéal pour votre objectif (${num(meal.kcal)} kcal, ${num(meal.proteines)} g de protéines).</p>`
+          ${meal ? `<p class="hint">Barres : part d'un repas idéal pour ${esc(me().nom)} (${num(meal.kcal)} kcal, ${num(meal.proteines)} g de protéines).</p>`
                  : `<p class="hint">Renseignez votre profil pour comparer à vos besoins.</p>`}
           ${res.missingMacros.length ? `<p class="hint">Macros inconnues pour : ${esc(res.missingMacros.join(", "))}.</p>` : ""}
         </div>
@@ -430,37 +501,161 @@ function viewCourses() {
     </div>`;
 }
 
+const MODES = { seul: ["🙂", "Seul", 1], couple: ["💑", "En couple", 2], famille: ["👨‍👩‍👧", "En famille", 3] };
+
 function viewProfil() {
-  const p = state.profile || { sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3 };
-  const { daily, meal } = targets();
-  const seg = (field, options) => `<div class="segmented" role="group">${options.map(([v, l]) =>
-    `<button type="button" data-action="profile" data-field="${field}" data-value="${v}" aria-pressed="${String(p[field]) === String(v)}">${l}</button>`).join("")}</div>`;
-  return `<div class="page-head"><h1>Mon profil sportif</h1></div>
+  const members = state.members;
+  const n = present().length;
+  const mode = n <= 1 ? "seul" : n === 2 ? "couple" : "famille";
+  const f = state.foyer;
+  const mat = f.materiel || Object.keys(C.EQUIPMENT);
+  const hp = prefs();
+  const shown = allRecipes().filter((r) => compatOf(r).ok).length;
+  return `<div class="page-head"><h1>Mon foyer</h1></div>
     <div class="two-cols">
       <div>
         <div class="panel">
-          <h2>Vous</h2>
-          <div class="field" style="margin-bottom:14px">Sexe ${seg("sexe", [["homme", "Homme"], ["femme", "Femme"]])}</div>
+          <h2>Pour combien cuisinez-vous ?</h2>
+          <div class="choices cols-3">${Object.entries(MODES).map(([k, [e, l, size]]) =>
+            `<button type="button" class="choice" data-action="household-mode" data-value="${k}" aria-pressed="${mode === k}"><span class="emoji" aria-hidden="true">${e}</span><b>${l}</b><span>${size === 1 ? "1 personne" : size === 2 ? "2 personnes" : "3 personnes ou plus"}</span></button>`).join("")}</div>
+          <p class="hint">Les courses et les couverts du menu couvrent les membres présents ; chacun garde sa portion selon son objectif.</p>
+        </div>
+        <div class="panel">
+          <h2>Membres</h2>
+          ${members.length ? `<ul class="members">${members.map((x) => {
+            const d = C.dailyTargets(x);
+            return `<li class="member${x.present ? "" : " absent"}">
+              <label class="present" title="Mange à la maison"><input type="checkbox" data-action="member-present" data-id="${esc(x.id)}"${x.present ? " checked" : ""}><span class="sr-only">Présent</span></label>
+              <a class="member-main" href="#/profil/${encodeURIComponent(x.id)}">
+                <span class="avatar" aria-hidden="true">${esc(x.emoji)}</span>
+                <span><b>${esc(x.nom)}</b><span class="muted">${d ? `${C.GOALS[x.objectif]?.label} · ${num(d.kcal)} kcal · ${num(d.proteines)} g prot.` : "Profil à compléter"}${memberPrefsSummary(x)}</span></span>
+              </a>
+              <a class="btn small ghost" href="#/profil/${encodeURIComponent(x.id)}">Modifier</a>
+            </li>`;
+          }).join("")}</ul>` : `<p class="muted">Aucun profil pour l'instant.</p>`}
+          <button class="btn" data-action="add-member" style="margin-top:12px">+ Ajouter un membre</button>
+        </div>
+        <div class="panel">
+          <h2>Budget et temps</h2>
           <div class="form-grid">
-            <label class="field">Âge<input id="profil-age" type="number" inputmode="numeric" min="14" max="99" data-action="profile-input" data-field="age" value="${esc(p.age)}" placeholder="30"></label>
-            <label class="field">Poids (kg)<input id="profil-poids" type="number" inputmode="decimal" min="35" max="250" step="0.5" data-action="profile-input" data-field="poids" value="${esc(p.poids)}" placeholder="75"></label>
-            <label class="field">Taille (cm)<input id="profil-taille" type="number" inputmode="numeric" min="130" max="230" data-action="profile-input" data-field="taille" value="${esc(p.taille)}" placeholder="178"></label>
+            <label class="field">Budget par jour et par personne (€)<input id="foyer-budget" type="number" inputmode="decimal" min="1" max="100" step="0.5" data-action="foyer-input" data-field="budget" value="${esc(f.budget)}" placeholder="Pas de limite"></label>
+            <label class="field">Temps de cuisine par jour (min)<input id="foyer-temps" type="number" inputmode="numeric" min="5" max="240" step="5" data-action="foyer-input" data-field="temps" value="${esc(f.temps)}" placeholder="Pas de limite"></label>
+          </div>
+          <p class="hint">Les recettes plus chères qu'un repas de votre budget ou plus longues que la moitié de votre temps du jour descendent dans le classement (sans être masquées).</p>
+        </div>
+        <div class="panel">
+          <h2>Matériel disponible</h2>
+          <div class="chips-select">${Object.entries(C.EQUIPMENT).map(([k, e]) =>
+            `<button type="button" class="chip" data-action="foyer-materiel" data-value="${k}" aria-pressed="${mat.includes(k)}">${esc(e.label)}</button>`).join("")}</div>
+          <p class="hint">Les recettes qui demandent un appareil absent sont masquées.</p>
+        </div>
+      </div>
+      <aside class="panel sticky">
+        <h2>Le foyer en bref</h2>
+        <div class="targets">
+          <div class="kpi"><b>${n}</b><span>${n > 1 ? "personnes" : "personne"} à table</span></div>
+          <div class="kpi"><b>${shown}</b><span>recettes compatibles</span></div>
+        </div>
+        ${hp.allergies.length ? `<div class="total-line"><span>Allergies</span><span>${esc(hp.allergies.map((a) => C.ALLERGENS[a].label).join(", "))}</span></div>` : ""}
+        ${hp.regimes.length ? `<div class="total-line"><span>Régimes</span><span>${esc(hp.regimes.map((d) => C.DIETS[d].label).join(", "))}</span></div>` : ""}
+        ${hp.deteste.length ? `<div class="total-line"><span>Évités</span><span>${esc(hp.deteste.join(", "))}</span></div>` : ""}
+        <p class="hint">Les contraintes de tous les membres présents s'additionnent : une recette doit convenir à tout le monde.</p>
+        <a class="btn primary block" href="#/" style="margin-top:12px">Voir les recettes adaptées →</a>
+      </aside>
+    </div>`;
+}
+
+function memberPrefsSummary(x) {
+  const p = x.prefs;
+  const bits = [
+    ...p.allergies.map((a) => C.ALLERGENS[a].label),
+    ...p.regimes.filter((d) => d !== "aucun").map((d) => C.DIETS[d].label),
+    p.deteste.length ? `${p.deteste.length} ingrédient${p.deteste.length > 1 ? "s" : ""} évité${p.deteste.length > 1 ? "s" : ""}` : "",
+  ].filter(Boolean);
+  return bits.length ? ` · ${esc(bits.join(", "))}` : "";
+}
+
+// Ingrédients des recettes, pour la liste déroulante des ingrédients détestés
+let ingredientChoices = null;
+function dislikeOptions() {
+  if (!ingredientChoices) {
+    const names = new Map();
+    for (const r of book.recettes) for (const l of r.ingredients) {
+      const name = (C.parseLine(l).name || "").trim().toLowerCase();
+      if (name && name.length < 40) names.set(name, (names.get(name) || 0) + 1);
+    }
+    ingredientChoices = [...names.keys()].sort((a, b) => a.localeCompare(b, "fr"));
+  }
+  return ingredientChoices;
+}
+
+function viewMember(id) {
+  const p = state.members.find((x) => x.id === id);
+  if (!p) return notFound();
+  const { daily, meal } = targets(p);
+  const seg = (field, options) => `<div class="segmented" role="group">${options.map(([v, l]) =>
+    `<button type="button" data-action="member" data-id="${esc(p.id)}" data-field="${field}" data-value="${v}" aria-pressed="${String(p[field]) === String(v)}">${l}</button>`).join("")}</div>`;
+  const pr = p.prefs;
+  const pref = (field, v, label, pressed) =>
+    `<button type="button" class="chip" data-action="member-pref" data-id="${esc(p.id)}" data-field="${field}" data-value="${esc(v)}" aria-pressed="${pressed}">${label}</button>`;
+  const options = dislikeOptions().filter((x) => !pr.deteste.includes(x));
+  return `<a class="back" href="#/profil">← Mon foyer</a>
+    <div class="page-head"><h1>${esc(p.emoji)} ${esc(p.nom)}</h1></div>
+    <div class="two-cols">
+      <div>
+        <div class="panel">
+          <h2>Profil</h2>
+          <div class="form-grid">
+            <label class="field">Prénom<input id="member-nom" type="text" maxlength="24" data-action="member-input" data-id="${esc(p.id)}" data-field="nom" value="${esc(p.nom)}"></label>
+            <div class="field span-all">Avatar<div class="avatars" role="group">${AVATARS.map((e) =>
+              `<button type="button" data-action="member" data-id="${esc(p.id)}" data-field="emoji" data-value="${e}" aria-pressed="${p.emoji === e}" aria-label="Avatar ${e}">${e}</button>`).join("")}</div></div>
+          </div>
+          <div class="field" style="margin:14px 0">Sexe ${seg("sexe", [["homme", "Homme"], ["femme", "Femme"]])}</div>
+          <div class="form-grid">
+            <label class="field">Âge<input id="profil-age" type="number" inputmode="numeric" min="3" max="99" data-action="member-input" data-id="${esc(p.id)}" data-field="age" value="${esc(p.age)}" placeholder="30"></label>
+            <label class="field">Poids (kg)<input id="profil-poids" type="number" inputmode="decimal" min="10" max="250" step="0.5" data-action="member-input" data-id="${esc(p.id)}" data-field="poids" value="${esc(p.poids)}" placeholder="75"></label>
+            <label class="field">Taille (cm)<input id="profil-taille" type="number" inputmode="numeric" min="80" max="230" data-action="member-input" data-id="${esc(p.id)}" data-field="taille" value="${esc(p.taille)}" placeholder="178"></label>
             <div class="field">Repas par jour ${seg("repas", [[2, "2"], [3, "3"], [4, "4"], [5, "5"]])}</div>
           </div>
         </div>
         <div class="panel">
           <h2>Activité</h2>
           <div class="choices">${Object.entries(C.ACTIVITY).map(([k, a]) =>
-            `<button type="button" class="choice" data-action="profile" data-field="activite" data-value="${k}" aria-pressed="${p.activite === k}"><b>${a.label}</b><span>${a.hint}</span></button>`).join("")}</div>
+            `<button type="button" class="choice" data-action="member" data-id="${esc(p.id)}" data-field="activite" data-value="${k}" aria-pressed="${p.activite === k}"><b>${a.label}</b><span>${a.hint}</span></button>`).join("")}</div>
         </div>
         <div class="panel">
           <h2>Objectif</h2>
           <div class="choices cols-2">${Object.entries(C.GOALS).map(([k, g]) =>
-            `<button type="button" class="choice" data-action="profile" data-field="objectif" data-value="${k}" aria-pressed="${p.objectif === k}"><span class="emoji" aria-hidden="true">${{ seche: "🔥", recompo: "🔄", maintien: "⚖️", masse: "🏋️" }[k]}</span><b>${g.label}</b><span>${g.hint}</span></button>`).join("")}</div>
+            `<button type="button" class="choice" data-action="member" data-id="${esc(p.id)}" data-field="objectif" data-value="${k}" aria-pressed="${p.objectif === k}"><span class="emoji" aria-hidden="true">${{ seche: "🔥", recompo: "🔄", maintien: "⚖️", masse: "🏋️" }[k]}</span><b>${g.label}</b><span>${g.hint}</span></button>`).join("")}</div>
         </div>
+        <div class="panel">
+          <h2>Allergies et intolérances</h2>
+          <div class="chips-select">${Object.entries(C.ALLERGENS).map(([k, a]) => pref("allergies", k, esc(a.label), pr.allergies.includes(k))).join("")}</div>
+          <p class="hint">Détection d'après les noms des ingrédients : vérifiez toujours les étiquettes des produits.</p>
+        </div>
+        <div class="panel">
+          <h2>Régime</h2>
+          <div class="chips-select">${Object.entries(C.DIETS).map(([k, d]) => pref("regimes", k, `${esc(d.label)}${d.hint ? `<small> · ${esc(d.hint)}</small>` : ""}`, pr.regimes.includes(k))).join("")}</div>
+        </div>
+        <div class="panel">
+          <h2>Petit-déjeuner</h2>
+          <div class="segmented" role="group">${[["sucre", "🍯 Sucré"], ["sale", "🧂 Salé"], ["les-deux", "Les deux"]].map(([v, l]) =>
+            pref("petitdej", v, l, pr.petitdej === v).replace('class="chip"', "")).join("")}</div>
+        </div>
+        <div class="panel">
+          <h2>Ingrédients détestés</h2>
+          <select id="member-deteste" data-action="member-dislike" data-id="${esc(p.id)}" aria-label="Ajouter un ingrédient détesté">
+            <option value="">Choisir un ingrédient…</option>
+            ${options.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}
+          </select>
+          ${pr.deteste.length ? `<div class="chips-select" style="margin-top:12px">${pr.deteste.map((x) =>
+            `<button type="button" class="chip removable" data-action="member-undislike" data-id="${esc(p.id)}" data-value="${esc(x)}" aria-label="Retirer ${esc(x)}">${esc(x)} ✕</button>`).join("")}</div>`
+            : `<p class="hint">Les recettes qui en contiennent seront masquées.</p>`}
+        </div>
+        ${state.members.length > 1 ? `<button class="btn ghost danger" data-action="delete-member" data-id="${esc(p.id)}">Supprimer ce profil</button>` : ""}
       </div>
       <aside class="panel sticky">
-        <h2>Vos besoins par jour</h2>
+        <h2>Besoins de ${esc(p.nom)} par jour</h2>
         ${daily ? `
           <div class="targets">
             <div class="kpi"><b>${num(daily.kcal)}</b><span>kcal</span></div>
@@ -472,9 +667,9 @@ function viewProfil() {
           <div class="total-line"><span>Énergie</span><span>${num(meal.kcal)} kcal</span></div>
           <div class="total-line"><span>Protéines</span><span>${num(meal.proteines)} g</span></div>
           <p class="hint">Métabolisme de base ${num(daily.bmr)} kcal (formule de Mifflin-St Jeor), dépense estimée ${num(daily.tdee)} kcal.
-            Protéines : ${num(C.GOALS[p.objectif].proteines, 1)} g par kg ; lipides : au moins 25 % des calories. Ce sont des repères, pas un avis médical.</p>
-          <a class="btn primary block" href="#/" style="margin-top:12px">Voir les recettes adaptées →</a>`
-        : `<p class="muted">Renseignez votre âge, votre poids et votre taille pour calculer vos besoins.</p>`}
+            Protéines : ${num(C.GOALS[p.objectif].proteines, 1)} g par kg ; lipides : au moins 25 % des calories. Ce sont des repères pour adultes, pas un avis médical.</p>`
+        : `<p class="muted">Renseignez l'âge, le poids et la taille pour calculer les besoins.</p>`}
+        <a class="btn primary block" href="#/profil" style="margin-top:12px">✓ Terminé</a>
       </aside>
     </div>`;
 }
@@ -559,6 +754,7 @@ const ROUTES = [
   [/^#\/menu$/, () => viewMenu(), "menu"],
   [/^#\/courses$/, () => viewCourses(), "courses"],
   [/^#\/profil$/, () => viewProfil(), "profil"],
+  [/^#\/profil\/(.+)$/, (m) => viewMember(decodeURIComponent(m[1])), "profil"],
   [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "recettes"],
   [/^#\/produits$/, () => viewProducts(), "recettes"],
 ];
@@ -613,7 +809,7 @@ function toggleMenu(id) {
     delete state.menu[id];
     toast(`Retiré du menu : ${r.nom}`);
   } else {
-    state.menu[id] = { ...(ui.view[id] || { p: r.portions, t: 1 }) };
+    state.menu[id] = { ...(ui.view[id] || { p: present().length > 1 ? householdSize() : r.portions, t: 1 }) };
     toast(`Ajouté au menu : ${r.nom}`);
   }
   save();
@@ -659,11 +855,52 @@ function sendToCart(nom, list) {
   dialog.showModal();
 }
 
-function updateProfile(field, value) {
-  state.profile = { sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3, ...state.profile };
-  state.profile[field] = ["age", "poids", "taille", "repas"].includes(field) ? (value === "" ? "" : +value) : value;
+function changed() {
   scoreCache.clear();
   save();
+}
+
+function memberById(id) { return state.members.find((x) => x.id === id); }
+
+function updateMember(id, field, value) {
+  const m = memberById(id);
+  if (!m) return;
+  m[field] = ["age", "poids", "taille", "repas"].includes(field) ? (value === "" ? "" : +value) : value;
+  changed();
+}
+
+function toggleMemberPref(id, field, value) {
+  const p = memberById(id)?.prefs;
+  if (!p) return;
+  if (field === "petitdej") p.petitdej = value;
+  else if (field === "regimes") {
+    // « Aucun » exclut les autres régimes ; végétalien inclut végétarien, etc. : on laisse cumuler
+    const set = new Set(p.regimes.filter((d) => d !== "aucun"));
+    if (value === "aucun") set.clear(); else if (set.has(value)) set.delete(value); else set.add(value);
+    p.regimes = set.size ? [...set] : ["aucun"];
+  } else {
+    p[field] = p[field].includes(value) ? p[field].filter((x) => x !== value) : [...p[field], value];
+  }
+  changed();
+}
+
+function addMember(fields = {}) {
+  const n = state.members.length;
+  const m = newMember({ nom: n ? `Membre ${n + 1}` : "Moi", emoji: AVATARS[n % AVATARS.length], ...fields });
+  state.members.push(m);
+  changed();
+  return m;
+}
+
+// Seul / couple / famille : ajuste le nombre de membres présents (sans supprimer de profil)
+function setHouseholdMode(mode) {
+  const want = MODES[mode][2];
+  if (!state.members.length) addMember();
+  state.members.forEach((m, i) => { m.present = mode === "famille" ? m.present || i < want : i < want; });
+  while (present().length < want) addMember({ present: true });
+  if (mode === "seul" && !present().length) state.members[0].present = true;
+  if (!present().some((m) => m.id === state.rankFor)) state.rankFor = null;
+  changed();
 }
 
 function saveDraft() {
@@ -693,13 +930,34 @@ document.addEventListener("click", (e) => {
     case "servings": setServing(id, (s) => ({ p: Math.min(20, Math.max(1, s.p + +el.dataset.delta)) })); break;
     case "adapt": {
       const t = +el.dataset.size;
-      setServing(id, () => ({ t }));
-      toast(t === 1 ? "Portion standard" : `Portions ×${num(t, 2)} pour votre objectif`);
+      const p = +el.dataset.people || servingOf(recipeById(id)).p;
+      setServing(id, () => ({ t, p }));
+      toast(t === 1 && !el.dataset.people ? "Portion standard" : present().length > 1 ? `Adaptée au foyer : ${p} couverts` : `Portions ×${num(t, 2)} pour votre objectif`);
       break;
     }
     case "tag": ui.tag = el.dataset.tag || null; render({ keepScroll: true }); break;
     case "cook-step": ui.cookStep = Math.max(0, ui.cookStep + +el.dataset.delta); render(); break;
-    case "profile": updateProfile(el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
+    case "member": updateMember(id, el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
+    case "member-pref": toggleMemberPref(id, el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
+    case "member-undislike": toggleMemberPref(id, "deteste", el.dataset.value); render({ keepScroll: true }); break;
+    case "add-member": location.hash = `#/profil/${encodeURIComponent(addMember().id)}`; break;
+    case "delete-member":
+      state.members = state.members.filter((m) => m.id !== id);
+      if (!present().length && state.members[0]) state.members[0].present = true;
+      changed();
+      location.hash = "#/profil";
+      toast("Profil supprimé.");
+      break;
+    case "household-mode": setHouseholdMode(el.dataset.value); render({ keepScroll: true }); break;
+    case "foyer-materiel": {
+      const set = new Set(state.foyer.materiel || Object.keys(C.EQUIPMENT));
+      if (set.has(el.dataset.value)) set.delete(el.dataset.value); else set.add(el.dataset.value);
+      state.foyer.materiel = set.size === Object.keys(C.EQUIPMENT).length ? null : [...set];
+      changed();
+      render({ keepScroll: true });
+      break;
+    }
+    case "show-all": ui.showAll = !ui.showAll; render({ keepScroll: true }); break;
     case "send-recipe": {
       const r = recipeById(id);
       sendToCart(r.nom, C.shoppingList(compute(r).lines, { exclude: new Set(state.owned) }));
@@ -736,6 +994,19 @@ document.addEventListener("change", (e) => {
     save();
     if (ui.draft) $("#draft-preview").innerHTML = draftPreview(ui.draft);
     else render({ keepScroll: true });
+  } else if (el.dataset.action === "member-present") {
+    const m = memberById(el.dataset.id);
+    m.present = el.checked;
+    if (!present().length) { m.present = true; toast("Au moins une personne doit être présente."); }
+    changed();
+    render({ keepScroll: true });
+  } else if (el.dataset.action === "member-dislike") {
+    if (el.value) toggleMemberPref(el.dataset.id, "deteste", el.value);
+    render({ keepScroll: true });
+  } else if (el.dataset.action === "rank-for") {
+    state.rankFor = el.value;
+    changed();
+    render({ keepScroll: true });
   } else if (el.dataset.action === "owned") {
     const set = new Set(state.owned);
     if (el.checked) set.add(el.dataset.ean); else set.delete(el.dataset.ean);
@@ -753,7 +1024,8 @@ document.addEventListener("input", (e) => {
   const el = e.target;
   if (el.id === "recipe-search") { ui.query = el.value; rerenderSoon(); }
   else if (el.dataset.action === "product-query") { ui.productQuery = el.value; rerenderSoon(); }
-  else if (el.dataset.action === "profile-input") { updateProfile(el.dataset.field, el.value); rerenderSoon(); }
+  else if (el.dataset.action === "member-input") { updateMember(el.dataset.id, el.dataset.field, el.value); rerenderSoon(); }
+  else if (el.dataset.action === "foyer-input") { state.foyer[el.dataset.field] = el.value; changed(); rerenderSoon(); }
   else if (el.dataset.action === "draft") { ui.draft[el.dataset.field] = el.value; previewSoon(); }
 });
 

@@ -22,10 +22,10 @@ Inspiré de la simplicité de Jow, avec en plus la partie nutrition et sport :
 | **Fiche recette** | Nombre de couverts, **« Adapter à mon objectif »** (taille de portion calée sur vos besoins), macros comparées à un repas idéal, produits du Drive modifiables, mode **« Passer en cuisine »** étape par étape. |
 | **Menu** | Les recettes de la semaine, leurs couverts, le coût total et la moyenne des macros par repas. |
 | **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour. |
-| **Profil** | Âge, poids, taille, activité, objectif (sèche, recomposition, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor). |
+| **Profil** | Le **foyer** : seul, en couple ou en famille, plusieurs profils (membres présents ou non). Chaque membre : âge, poids, taille, activité, objectif (sèche, recomposition, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor) ; allergies et intolérances (14 allergènes majeurs simplifiés à 10), régime (végétarien, pescétarien, végétalien, sans porc), petit-déjeuner sucré ou salé, ingrédients détestés (liste déroulante). Pour le foyer : budget par jour et par personne, temps de cuisine par jour, matériel disponible. Les recettes incompatibles avec un membre présent sont masquées ; budget, temps et goût du petit-déjeuner font baisser la note ; chaque fiche propose « Adapter au foyer » avec la portion de chacun. |
 | **Créer ma recette** | Le mode libre : un ingrédient par ligne, chiffré au Drive, enregistré dans « Mes recettes ». |
 
-Tout est enregistré dans le navigateur (menu, profil, recettes perso). Les calculs sont dans
+Tout est enregistré dans le navigateur (menu, foyer et profils, recettes perso). Les calculs sont dans
 `site/core.js`, testés avec Node (`node --test tests/site_core.test.js`), et un test vérifie que chaque ingrédient des
 recettes trouve un produit du Drive avec des macros.
 
