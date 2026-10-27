@@ -168,6 +168,23 @@ main { padding: 24px 0 48px; min-height: 70vh; }
   display: grid; place-items: center; box-shadow: 0 4px 12px rgb(0 0 0 / 12%); z-index: 2;
 }
 .add[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
+.medal { position: absolute; top: 10px; left: 10px; z-index: 2; font-size: 1.9rem; line-height: 1; filter: drop-shadow(0 3px 6px rgb(0 0 0 / 18%)); }
+.score { color: var(--brand); }
+.for-you { margin-bottom: 28px; }
+.for-you > h2, .all-title { font-size: 1.6rem; margin-bottom: 4px; }
+.for-you > p { margin: 0 0 14px; }
+.top-row { margin-bottom: 18px; }
+.top-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.top-head h3 { font-size: 1.15rem; }
+.top-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.top-cards .tile { aspect-ratio: 16 / 9; }
+@media (max-width: 760px) {
+  /* carrousel horizontal, comme les rangées de Jow */
+  .top-cards { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: 6px; scrollbar-width: none; }
+  .top-cards::-webkit-scrollbar { display: none; }
+  .top-cards .card { flex: 0 0 62%; scroll-snap-align: start; }
+}
+.all-title { margin: 8px 0 14px; }
 .card.create { border: 2px dashed var(--line); box-shadow: none; background: transparent; }
 .card.create .tile { background: var(--surface-2); }
 .empty { text-align: center; padding: 48px 16px; color: var(--muted); }
@@ -281,6 +298,7 @@ main { padding: 24px 0 48px; min-height: 70vh; }
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--brand); box-shadow: 0 2px 6px rgb(0 0 0 / 8%); }
 .choices { display: grid; gap: 10px; }
 .choices.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.choices.cols-2 { grid-template-columns: repeat(2, 1fr); }
 @media (max-width: 620px) { .choices.cols-3 { grid-template-columns: 1fr; } }
 .choice {
   text-align: left; border: 2px solid var(--line); background: var(--surface); border-radius: var(--radius-s);

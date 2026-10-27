@@ -91,3 +91,17 @@ test("chaque ingrédient des recettes trouve un produit du Drive, avec des macro
   }
   assert.deepEqual(problems, []);
 });
+
+test("note de pertinence : protéinée et bien dosée devant grasse ou trop légère", () => {
+  const daily = Core.dailyTargets({ sexe: "homme", age: 25, poids: 75, taille: 178, activite: "modere", objectif: "recompo" });
+  assert.equal(daily.proteines, 165); // 2,2 g/kg
+  const opts = { daily, meals: 3, goal: "recompo" };
+  const bowl = Core.recipeScore({ macros: [550, 47, 66, 8], cost: 2.4 }, opts);
+  const gras = Core.recipeScore({ macros: [700, 20, 40, 50], cost: 2.4 }, opts);
+  const leger = Core.recipeScore({ macros: [150, 15, 10, 5], cost: 2.4 }, opts);
+  assert.ok(bowl.score > gras.score && bowl.score > leger.score, `${bowl.score} ${gras.score} ${leger.score}`);
+  assert.equal(Core.recipeScore({ macros: [550, 47, 66, 8], cost: 2.4 }, { daily: null }), null);
+  // une collation est jugée face à une collation, pas à un repas
+  const snack = Core.recipeScore({ macros: [250, 20, 25, 6], cost: 1 }, { ...opts, snack: true });
+  assert.equal(snack.size, 1.25);
+});

@@ -102,8 +102,30 @@ function stats(r) {
   return statsCache.get(key);
 }
 
-// Une collation ne remplace pas un repas : pas de conseil de portion
-const isSnack = (r) => (r.tags || []).includes("collation");
+// Une collation ne remplace pas un repas : pas de conseil de portion. Un petit-déj compte comme un repas,
+// même s'il peut aussi servir de collation.
+const isSnack = (r) => (r.tags || []).includes("collation") && !(r.tags || []).includes("petit-dej");
+// Les rangées de repas ne proposent que des plats : pas de collation ni de petit-déj en « Perte de gras »
+const MEAL_ONLY_EXCLUDES = ["collation", "petit-dej"];
+const eligibleForTop = (r, filter) => MEAL_ONLY_EXCLUDES.includes(filter) || !(r.tags || []).some((t) => MEAL_ONLY_EXCLUDES.includes(t));
+
+// Filtres présentés dans « Le top 3 pour vous », dans cet ordre
+const TOP_FILTERS = ["seche", "masse", "gourmand", "petit-dej", "collation", "meal-prep", "vegetarien"];
+const MEDALS = ["🥇", "🥈", "🥉"];
+
+const scoreCache = new Map();
+function scoreOf(r) {
+  const { daily } = targets();
+  if (!daily) return null;
+  const key = `${r.id}|${r.ingredients.join("\n")}|${JSON.stringify(state.profile)}|${state.strategy}`;
+  if (!scoreCache.has(key)) {
+    scoreCache.set(key, C.recipeScore(stats(r), {
+      daily, meals: state.profile.repas || 3, goal: state.profile.objectif, snack: isSnack(r),
+    }));
+  }
+  return scoreCache.get(key);
+}
+const byScore = (a, b) => (scoreOf(b)?.score ?? -1) - (scoreOf(a)?.score ?? -1);
 
 function fitLabel(r, kcalPP, meal) {
   if (!meal || !kcalPP || isSnack(r)) return "";
@@ -119,10 +141,12 @@ function tileHtml(r, cls = "") {
   return `<div class="tile ${cls}" style="background:${esc(r.couleur)}" aria-hidden="true">${esc(r.emoji)}</div>`;
 }
 
-function cardHtml(r, meal) {
+function cardHtml(r, meal, rank = null) {
   const s = stats(r);
   const inMenu = !!state.menu[r.id];
+  const sc = scoreOf(r);
   return `<article class="card">
+    ${rank != null && rank < 3 ? `<span class="medal" aria-label="Numéro ${rank + 1} pour vous">${MEDALS[rank]}</span>` : ""}
     <button class="add" data-action="toggle-menu" data-id="${esc(r.id)}" aria-pressed="${inMenu}"
       aria-label="${inMenu ? "Retirer du menu" : "Ajouter au menu"} : ${esc(r.nom)}">${inMenu ? "✓" : "+"}</button>
     <a href="#/recette/${encodeURIComponent(r.id)}" style="color:inherit;text-decoration:none;display:contents">
@@ -134,7 +158,7 @@ function cardHtml(r, meal) {
           <span>${euro(s.cost)}/pers.</span>
         </div>
         <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span></div>
-        ${fitLabel(r, s.macros[0], meal)}
+        <div class="card-meta">${sc ? `<span class="score" title="Pertinence pour votre objectif">🎯 ${sc.score}/100</span>` : ""}${fitLabel(r, s.macros[0], meal)}</div>
       </div>
     </a>
   </article>`;
@@ -188,6 +212,18 @@ function viewRecipes() {
     return q.every((t) => w.some((x) => x.startsWith(t)));
   });
   const tags = Object.entries({ ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
+  if (daily) {
+    // mêmes règles que les rangées « top 3 » : dans un filtre de repas, les plats passent avant les collations
+    list.sort((a, b) => (ui.tag ? eligibleForTop(b, ui.tag) - eligibleForTop(a, ui.tag) : 0) || byScore(a, b));
+  }
+  const showTops = daily && !ui.tag && !q.length;
+  const tops = showTops ? TOP_FILTERS.map((t) => {
+    const best = allRecipes().filter((r) => (r.tags || []).includes(t) && eligibleForTop(r, t)).sort(byScore).slice(0, 3);
+    return `<div class="top-row">
+      <div class="top-head"><h3>${esc(book.tags[t])}</h3><button class="link-btn" data-action="tag" data-tag="${esc(t)}">Tout voir →</button></div>
+      <div class="top-cards">${best.map((r, i) => cardHtml(r, meal, i)).join("")}</div>
+    </div>`;
+  }).join("") : "";
   return `
     <section class="hero">
       <div>
@@ -207,8 +243,13 @@ function viewRecipes() {
         ${tags.map(([k, v]) => `<button class="chip" data-action="tag" data-tag="${esc(k)}" aria-pressed="${ui.tag === k}">${esc(v)}</button>`).join("")}
       </div>
     </div>
+    ${showTops ? `<section class="for-you" aria-labelledby="for-you-title">
+      <h2 id="for-you-title">Le top 3 pour vous</h2>
+      <p class="muted">Classé pour votre objectif « ${esc(C.GOALS[state.profile.objectif]?.label || "")} » : protéines, portion adaptée à votre repas idéal, lipides et prix. <a href="#/profil">Modifier mon profil</a></p>
+      ${tops}
+    </section><h2 class="all-title">Toutes les recettes</h2>` : ""}
     <div class="grid">
-      ${list.map((r) => cardHtml(r, meal)).join("")}
+      ${list.map((r, i) => cardHtml(r, meal, daily && ui.tag && !q.length && eligibleForTop(r, ui.tag) ? i : null)).join("")}
       <a class="card create" href="#/creer">
         <div class="tile" aria-hidden="true">✍️</div>
         <div class="card-body"><div class="card-title">Créer ma recette</div><div class="card-meta"><span>Mode libre : vos ingrédients, chiffrés au Drive</span></div></div>
@@ -414,8 +455,8 @@ function viewProfil() {
         </div>
         <div class="panel">
           <h2>Objectif</h2>
-          <div class="choices cols-3">${Object.entries(C.GOALS).map(([k, g]) =>
-            `<button type="button" class="choice" data-action="profile" data-field="objectif" data-value="${k}" aria-pressed="${p.objectif === k}"><span class="emoji" aria-hidden="true">${{ seche: "🔥", maintien: "⚖️", masse: "🏋️" }[k]}</span><b>${g.label}</b><span>${g.hint}</span></button>`).join("")}</div>
+          <div class="choices cols-2">${Object.entries(C.GOALS).map(([k, g]) =>
+            `<button type="button" class="choice" data-action="profile" data-field="objectif" data-value="${k}" aria-pressed="${p.objectif === k}"><span class="emoji" aria-hidden="true">${{ seche: "🔥", recompo: "🔄", maintien: "⚖️", masse: "🏋️" }[k]}</span><b>${g.label}</b><span>${g.hint}</span></button>`).join("")}</div>
         </div>
       </div>
       <aside class="panel sticky">
@@ -621,6 +662,7 @@ function sendToCart(nom, list) {
 function updateProfile(field, value) {
   state.profile = { sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3, ...state.profile };
   state.profile[field] = ["age", "poids", "taille", "repas"].includes(field) ? (value === "" ? "" : +value) : value;
+  scoreCache.clear();
   save();
 }
 
