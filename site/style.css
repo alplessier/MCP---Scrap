@@ -377,3 +377,4 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em;
 .card-meta.flags { color: var(--warn); font-size: 0.78rem; }
 .form-grid .span-all { grid-column: 1 / -1; }
 .form-grid { align-items: start; }
+.product .nutri .ratio { color: var(--p); }

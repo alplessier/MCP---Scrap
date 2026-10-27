@@ -42,11 +42,21 @@ const Core = (() => {
     return { maj: data.maj, magasin: data.magasin, products, byEan, generic };
   }
 
-  function search(cat, query, { usableFor = null, sort = "pertinence" } = {}) {
+  // Sans recherche, un tri autre que « pertinence » parcourt tout le catalogue (ou un rayon) :
+  // seuls les produits qui ont la donnée triée sont gardés.
+  function search(cat, query, { usableFor = null, sort = "pertinence", rayon = null } = {}) {
     const tokens = queryTokens(query);
-    if (!tokens.length) return [];
+    const has = {
+      "prix-kg": (p) => p.prix_unite != null,
+      "proteines-euro": (p) => proteinPerEuro(p) > 0,
+      "proteines-kcal": (p) => proteinPer100kcal(p) > 0,
+      proteines: (p) => !!p.macros,
+    }[sort];
+    if (!tokens.length && !has) return [];
     const hits = [];
     for (const p of cat.products) {
+      if (rayon && p.rayon !== rayon) continue;
+      if (!tokens.length) { if (has(p)) hits.push({ p, r: 0 }); continue; }
       if (usableFor && !isUsable(usableFor, p)) continue;
       let r = relevance(tokens, p.nameWords);
       if (r < 0 && !usableFor) {
@@ -61,10 +71,19 @@ const Core = (() => {
       "prix-kg": (a, b) => (a.p.prix_unite ?? 1e9) - (b.p.prix_unite ?? 1e9),
       "proteines-euro": (a, b) => proteinPerEuro(b.p) - proteinPerEuro(a.p),
       proteines: (a, b) => (b.p.macros?.[1] ?? -1) - (a.p.macros?.[1] ?? -1),
+      "proteines-kcal": (a, b) => proteinPer100kcal(b.p) - proteinPer100kcal(a.p),
     };
     return hits.sort(sorters[sort] || sorters.pertinence).map((h) => h.p);
   }
 
+  // Densité protéique : grammes de protéines pour 100 kcal (le poulet ≈ 20, le skyr ≈ 18, le pain ≈ 3).
+  // Écartés : les produits presque sans calories (eau, épices, sodas zéro), où le rapport n'a pas de sens,
+  // et les fiches incohérentes où les protéines seules (4 kcal/g) dépassent l'énergie annoncée.
+  const proteinPer100kcal = (p) => {
+    const m = p.macros;
+    if (!m || m[0] < 15 || m[1] * 4 > m[0] * 1.1 + 2) return -1;
+    return (m[1] * 100) / m[0];
+  };
   const proteinPerEuro = (p) => (p.macros && p.prix_unite && p.unite !== "PIECE" ? (p.macros[1] * 10) / p.prix_unite : -1);
 
   function genericMacros(cat, name) {
@@ -407,7 +426,7 @@ const Core = (() => {
 
   return {
     normalize, words, queryTokens, relevance, loadCatalogue, search, proteinPerEuro, genericMacros,
-    parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
+    proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
     encode, decode, cartUrl,
