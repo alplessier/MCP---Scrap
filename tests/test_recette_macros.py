@@ -180,3 +180,16 @@ def test_update_nutrition_only_fetches_new_products(tmp_path, monkeypatch):
 def test_macros_recomputes_missing_kcal():
     m = nut.macros_from_nutriments({"energy-kcal_100g": 0, "proteins_100g": 23, "fat_100g": 11})
     assert m.kcal == 4 * 23 + 9 * 11
+
+
+def test_build_userscript(tmp_path):
+    import re
+
+    from recette_macros.site import build_userscript
+
+    (tmp_path / "carrefour-panier.js").write_text("console.log(1);\n", encoding="utf-8")
+    script = build_userscript(tmp_path).read_text(encoding="utf-8")
+    assert script.startswith("// ==UserScript==") and "@match        https://www.carrefour.fr/*" in script
+    assert script.endswith("console.log(1);\n")
+    # version datée, toujours croissante : les extensions ne mettent à jour que vers une version supérieure
+    assert re.search(r"@version      1\.\d{8}\.\d{4}\n", script)

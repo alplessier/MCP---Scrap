@@ -20,6 +20,25 @@ Un site pour chiffrer ses recettes **en euros et en macros**, avec les prix du
 | **Produits** | Recherche dans le catalogue, triable par prix au kilo ou par **grammes de protéines par euro**. |
 | **Mes recettes** | Recettes enregistrées dans le navigateur, recalculées avec les prix de la semaine. Le bouton « Copier le lien » partage une recette. |
 
+### Envoyer une recette au panier Carrefour
+
+Le bouton **🛒 Ajouter au panier Carrefour** ouvre carrefour.fr sur le Drive Jaude et ajoute les paquets
+entiers de la recette au panier. Si vous êtes connecté à votre compte, ce panier est aussi celui de
+l'**application Carrefour** : il ne reste qu'à choisir le créneau et payer.
+
+Un site extérieur ne peut pas toucher au panier Carrefour (le navigateur l'interdit). L'ajout est donc fait
+**sur carrefour.fr** par `site/carrefour-panier.js`, installé une fois au choix :
+
+- **Userscript (recommandé, un seul clic ensuite)** : extension [Violentmonkey](https://violentmonkey.github.io/)
+  ou [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge, Firefox Android ; app « Userscripts »
+  sur iPhone), puis le lien `carrefour-panier.user.js` du site. Il se met à jour tout seul.
+- **Favori** : glisser le bouton « 🛒 Panier recette » dans la barre de favoris, et cliquer dessus une fois la
+  page Carrefour ouverte.
+
+La recette voyage dans l'ancre de l'adresse (`#recette-macros=…`), qui n'est jamais envoyée à un serveur.
+Le script utilise la fonction d'ajout du site Carrefour lui-même (`window.ONECF.addToCart`). Les
+quantités s'ajoutent à ce qui est déjà au panier, et les produits indisponibles ce jour-là sont signalés.
+
 ### Format d'une ligne d'ingrédient
 
 | Exemple | Signification |

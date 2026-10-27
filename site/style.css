@@ -199,3 +199,23 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; 
   .search-bar { grid-template-columns: 1fr; }
   .stat-value { font-size: 1.35rem; }
 }
+
+/* Envoi au panier Carrefour */
+.btn.cart { width: 100%; margin-bottom: 10px; background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+.btn.cart:hover:not(:disabled) { filter: brightness(0.97); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dialog {
+  max-width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); padding: 20px 22px; box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
+}
+.dialog::backdrop { background: rgb(0 0 0 / 40%); }
+.dialog h2 { margin: 0 0 8px; font-size: 1.2rem; }
+.dialog h3 { margin: 0 0 4px; font-size: 0.95rem; }
+.dialog p, .dialog ol { margin: 6px 0; }
+.dialog ol { padding-left: 20px; }
+.dialog .option { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 12px 0; background: var(--bg); }
+.dialog .actions { margin-top: 14px; }
+.bookmarklet {
+  display: inline-block; padding: 4px 10px; border-radius: 999px; border: 1px dashed var(--accent);
+  text-decoration: none; font-weight: 600; cursor: grab;
+}
