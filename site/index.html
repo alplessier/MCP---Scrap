@@ -55,6 +55,7 @@
             <label class="radio"><input type="radio" name="strategy" value="pertinence" checked> Le plus pertinent</label>
             <label class="radio"><input type="radio" name="strategy" value="moins-cher"> Le moins cher au kilo</label>
           </fieldset>
+          <button id="send-cart" class="btn cart" type="button" disabled>🛒 Ajouter au panier Carrefour</button>
           <div class="actions">
             <button id="save-recipe" class="btn primary" type="button">Enregistrer</button>
             <button id="share-recipe" class="btn" type="button">Copier le lien</button>
@@ -121,6 +122,42 @@
     Prix relevés chaque semaine sur carrefour.fr (Drive Market Clermont-Ferrand Jaude). Macros : Open Food Facts,
     ou valeurs génériques Ciqual (marquées *). Les promotions fidélité ne sont pas déduites.
   </footer>
+
+  <dialog id="cart-dialog" class="dialog" aria-labelledby="cart-dialog-title">
+    <form method="dialog">
+      <h2 id="cart-dialog-title">Envoyer au panier Carrefour</h2>
+      <p>Un site extérieur ne peut pas remplir votre panier : c'est une protection du navigateur. Un petit script,
+        installé <strong>une seule fois</strong>, fait l'ajout sur carrefour.fr, dans votre compte. Les produits
+        apparaissent ensuite aussi dans l'<strong>application Carrefour</strong>.</p>
+
+      <div class="option">
+        <h3>Option 1 — Automatique (recommandé)</h3>
+        <ol>
+          <li>Installez l'extension gratuite <a href="https://violentmonkey.github.io/get-it/" target="_blank" rel="noopener">Violentmonkey</a>
+            ou <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a>
+            (Chrome, Firefox, Edge, Firefox Android ; sur iPhone : l'app « Userscripts » pour Safari).</li>
+          <li><a id="userscript-link" href="carrefour-panier.user.js" target="_blank" rel="noopener">Installer le script « Panier Carrefour »</a>
+            puis confirmez dans l'extension.</li>
+        </ol>
+        <p class="muted">Ensuite, un clic sur le bouton suffit : carrefour.fr s'ouvre et remplit le panier.</p>
+      </div>
+
+      <div class="option">
+        <h3>Option 2 — Sans extension, avec un favori</h3>
+        <p>Glissez ce bouton dans votre barre de favoris :
+          <a id="bookmarklet" class="bookmarklet" href="#" title="Glissez-moi dans la barre de favoris">🛒 Panier recette</a></p>
+        <p class="muted">Après chaque envoi, cliquez sur ce favori une fois la page Carrefour ouverte.</p>
+      </div>
+
+      <p class="muted">Connectez-vous à votre compte sur carrefour.fr dans ce navigateur pour retrouver le panier dans l'application.
+        Les quantités sont celles des paquets entiers à acheter ; elles s'ajoutent à ce qui est déjà au panier.</p>
+      <label class="radio"><input type="checkbox" id="cart-dialog-skip"> C'est installé, ne plus afficher cette fenêtre</label>
+      <div class="actions">
+        <button class="btn primary" value="send" type="submit">Ouvrir Carrefour et ajouter</button>
+        <button class="btn ghost" value="cancel" type="submit">Annuler</button>
+      </div>
+    </form>
+  </dialog>
 
   <template id="line-template">
     <article class="line">

@@ -18,7 +18,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from .carrefour import BASE_URL, DEFAULT_STORE_REF, Product
+from .carrefour import BASE_URL, DEFAULT_STORE_REF, Product, store_is_applied
 from .text import category_bonus, query_tokens, relevance
 
 DATA_DIR = Path(os.environ.get("RECETTE_MACROS_DATA", Path(__file__).resolve().parent.parent / "data"))
@@ -159,11 +159,26 @@ def scrape_rayon(firecrawl, rayon: str, store_ref: str = DEFAULT_STORE_REF) -> t
     m = re.search(r'<pre id="recette-macros-dump">(.*?)</pre>', doc.raw_html or "", re.S)
     if not m:
         raise RuntimeError(f"Rayon {rayon} : aucune donnée renvoyée")
+    if not store_is_applied(doc.raw_html, store_ref):
+        # Carrefour renvoie alors le catalogue national, sans les offres du Drive : tout serait « retiré »
+        raise RuntimeError(f"Carrefour n'a pas appliqué le magasin {store_ref}")
     dump = json.loads(html.unescape(m.group(1)))
     products = [p for p in (normalize_item(i, store_ref, rayon) for i in dump["items"]) if p]
     info = {"annonces": dump["total"], "lus": len(dump["items"]), "pages_en_echec": dump["failedPages"],
             "drive": len(products)}
     return products, info
+
+
+def rayon_problem(info: dict, before_count: int) -> str | None:
+    """Raison de ne pas croire un relevé de rayon, ou None s'il est plausible."""
+    if info["pages_en_echec"]:
+        return f"pages en échec : {info['pages_en_echec']}"
+    if info["lus"] and not info["drive"]:
+        return f"aucun produit Drive sur {info['lus']} lus"
+    # Un rayon ne perd pas la moitié de ses produits en une semaine : plus probablement une page incomplète
+    if before_count >= 50 and info["drive"] < before_count / 2:
+        return f"{info['drive']} produits contre {before_count} la semaine précédente"
+    return None
 
 
 def write_catalogue(path: Path, catalogue: dict) -> None:
@@ -205,26 +220,27 @@ def update_catalogue(firecrawl=None, store_ref: str = DEFAULT_STORE_REF, rayons=
     failed = []
     for rayon in rayons:
         start = time.time()
-        products, info = None, None
+        products, info, problem = None, None, "aucune réponse"
+        before_count = sum(1 for p in previous.values() if p["rayon"] == rayon)
         for attempt in range(2):  # les échecs sont souvent passagers : une seconde tentative
             try:
                 products, info = scrape_rayon(firecrawl, rayon, store_ref)
             except Exception as e:  # un rayon en échec ne doit pas faire perdre les autres
+                products, info, problem = None, None, str(e)
                 log(f"  {rayon} : tentative {attempt + 1} en échec ({e})")
                 continue
-            if not info["pages_en_echec"]:
+            problem = rayon_problem(info, before_count)
+            if not problem:
                 break
-        if info is None:
-            log(f"✗ {rayon}")
+            log(f"  {rayon} : tentative {attempt + 1} suspecte ({problem})")
+        if info is None or problem:
+            # rayon conservé tel quel : ses produits de la semaine précédente restent sur le site
+            log(f"✗ {rayon} : {problem} — produits précédents conservés ({before_count})")
             failed.append(rayon)
             continue
         for p in products:
             current.setdefault(p["ean"], p)  # un produit peut apparaître dans plusieurs rayons
-        ok = not info["pages_en_echec"]
-        log(f"{'✓' if ok else '✗'} {rayon} : {info['drive']} produits Drive ({info['lus']}/{info['annonces']} lus, "
-            f"{time.time() - start:.0f} s){'' if ok else ' — pages en échec : ' + str(info['pages_en_echec'])}")
-        if not ok:
-            failed.append(rayon)
+        log(f"✓ {rayon} : {info['drive']} produits Drive ({info['lus']}/{info['annonces']} lus, {time.time() - start:.0f} s)")
 
     # Un rayon en échec ou non relevé cette fois garde ses produits précédents plutôt que de disparaître du site
     scraped = set(rayons) - set(failed)

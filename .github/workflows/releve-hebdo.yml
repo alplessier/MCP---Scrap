@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 150  # le tout premier relevé des macros prend ~1 h, les suivants quelques minutes
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # historique complet : le rebase avant push en a besoin
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -56,7 +58,9 @@ jobs:
             echo "Aucun changement."
           else
             git commit -m "Relevé du $(date +%F)"
-            git push
+            # main a pu avancer pendant le relevé (fusion d'une PR) : on se place par-dessus avant de pousser
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
   site:

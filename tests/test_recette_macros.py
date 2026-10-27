@@ -180,3 +180,35 @@ def test_update_nutrition_only_fetches_new_products(tmp_path, monkeypatch):
 def test_macros_recomputes_missing_kcal():
     m = nut.macros_from_nutriments({"energy-kcal_100g": 0, "proteins_100g": 23, "fat_100g": 11})
     assert m.kcal == 4 * 23 + 9 * 11
+
+
+def test_build_userscript(tmp_path):
+    import re
+
+    from recette_macros.site import build_userscript
+
+    (tmp_path / "carrefour-panier.js").write_text("console.log(1);\n", encoding="utf-8")
+    script = build_userscript(tmp_path).read_text(encoding="utf-8")
+    assert script.startswith("// ==UserScript==") and "@match        https://www.carrefour.fr/*" in script
+    assert script.endswith("console.log(1);\n")
+    # version datée, toujours croissante : les extensions ne mettent à jour que vers une version supérieure
+    assert re.search(r"@version      1\.\d{8}\.\d{4}\n", script)
+
+
+def test_suspicious_rayon_keeps_previous_products(tmp_path, monkeypatch):
+    rayon_items = {"pains": [api_item(str(i), 1.0) for i in range(60)]}
+    def fake(fc, rayon, store):
+        items = [p for p in (cat.normalize_item(i, store, rayon) for i in rayon_items[rayon]) if p]
+        return items, {"annonces": 1987, "lus": 1987, "pages_en_echec": [], "drive": len(items)}
+    monkeypatch.setattr(cat, "scrape_rayon", fake)
+    cat.update_catalogue(object(), "575", ["pains"], tmp_path, log=lambda *_: None)
+
+    # Carrefour renvoie le catalogue sans le magasin : aucune offre Drive
+    rayon_items["pains"] = [api_item(str(i), 1.0, store="999") for i in range(60)]
+    result = cat.update_catalogue(object(), "575", ["pains"], tmp_path, log=lambda *_: None)
+    assert result["rayons_en_echec"] == ["pains"] and result["retires"] == 0
+    assert len(json.loads((tmp_path / "produits.json").read_text())["produits"]) == 60
+
+    # Chute brutale (10 produits au lieu de 60) : même traitement
+    rayon_items["pains"] = [api_item(str(i), 1.0) for i in range(10)]
+    assert cat.update_catalogue(object(), "575", ["pains"], tmp_path, log=lambda *_: None)["retires"] == 0

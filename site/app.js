@@ -7,12 +7,15 @@ const TO_GRAMS = { g: 1, kg: 1000, ml: 1, cl: 10, l: 1000 };
 const LINE_RE = /^\s*(\d+(?:[.,]\d+)?)\s*(kg|g|cl|ml|l|pcs?|pièces?|x)?\.?\s+(.+?)(?:\s+@\s*(\d+(?:[.,]\d+)?)\s*g)?(?:\s+#(\d{8,14}))?\s*$/i;
 const MAX_CHOICES = 8;
 const STORAGE_KEY = "recette-macros:recettes";
+const CART_SETUP_KEY = "recette-macros:panier-installe";
 
 const state = {
   products: [],
   generic: [],
   pins: {}, // nom d'ingrédient normalisé -> EAN choisi à la main
   strategy: "pertinence",
+  magasin: { ref: "575", nom: "" },
+  lastResults: [],
 };
 
 // ---------- Texte ----------
@@ -60,6 +63,7 @@ async function loadCatalogue() {
     p.categoryWords = words(p.categorie || "");
     return p;
   });
+  state.magasin = data.magasin;
   state.generic = Object.entries(data.generique).map(([k, m]) => ({ tokens: queryTokens(k), macros: m }));
   const date = new Date(data.maj).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
   document.getElementById("store-info").textContent =
@@ -130,17 +134,20 @@ function candidatesFor(ing) {
   return top;
 }
 
+// Paquets entiers à acheter (tolérance de 2 % pour les arrondis du prix au kilo affiché)
+function packsFor(p, used) {
+  const pack = p.prix / p.prix_unite;
+  return pack > 0 ? Math.max(1, Math.ceil(used / pack - 0.02)) : null;
+}
+
 function costLine(ing, p) {
-  const out = { ing, product: p, cost: null, packs: null, bought: null, macros: null, generic: false };
+  const out = { ing, product: p, cost: null, used: null, packs: null, macros: null, generic: false };
   if (p) {
-    const used = p.unite === "PIECE" ? ing.pieces : ing.grams != null ? ing.grams / 1000 : null;
-    if (used != null) {
-      out.cost = used * p.prix_unite;
-      const pack = p.prix / p.prix_unite;
-      if (pack > 0) {
-        out.packs = Math.max(1, Math.ceil(used / pack - 0.02));
-        out.bought = out.packs * p.prix;
-      }
+    // quantité utilisée dans l'unité du prix (kg, L ou pièces)
+    out.used = p.unite === "PIECE" ? ing.pieces : ing.grams != null ? ing.grams / 1000 : null;
+    if (out.used != null) {
+      out.cost = out.used * p.prix_unite;
+      out.packs = packsFor(p, out.used);
     }
   }
   let per100 = p && p.macros;
@@ -178,7 +185,7 @@ function renderRecipe() {
   container.replaceChildren();
   const tpl = $("line-template");
 
-  let cost = 0, bought = 0;
+  let cost = 0;
   const total = [0, 0, 0, 0];
   const missingPrice = [], missingMacros = [];
 
@@ -223,7 +230,6 @@ function renderRecipe() {
     node.querySelector(".line-cost").textContent = r.cost != null ? euro(r.cost) : "prix inconnu";
 
     if (r.cost != null) cost += r.cost; else missingPrice.push(r.ing.raw);
-    if (r.bought != null) bought += r.bought;
     if (r.macros) r.macros.forEach((v, i) => (total[i] += v)); else missingMacros.push(r.ing.raw);
     container.append(node);
   }
@@ -242,7 +248,14 @@ function renderRecipe() {
     const kcalFromMacros = [per[1] * 4, per[2] * 4, per[3] * 9];
     const sum = kcalFromMacros.reduce((a, b) => a + b, 0) || 1;
     $("s-bar").querySelectorAll("i").forEach((el, i) => (el.style.width = `${(kcalFromMacros[i] / sum) * 100}%`));
-    $("s-bought").textContent = euro(bought);
+  }
+
+  state.lastResults = results;
+  const items = cartItems(results);
+  $("send-cart").disabled = !items.length;
+  if (has) {
+    const prices = new Map(results.filter((r) => r.product).map((r) => [r.product.ean, r.product.prix]));
+    $("s-bought").textContent = euro(items.reduce((sum, [ean, packs]) => sum + packs * prices.get(ean), 0));
   }
 
   const notes = [];
@@ -354,6 +367,64 @@ function renderSaved() {
   state.pins = pinsBackup;
 }
 
+// ---------- Envoi au panier Carrefour ----------
+// Le panier ne peut être rempli que depuis carrefour.fr : on y ouvre la recette (#recette-macros=…),
+// et site/carrefour-panier.js, installé comme userscript ou favori, fait l'ajout.
+
+// Un même produit sur plusieurs lignes : on additionne les quantités avant de compter les paquets
+// (200 g + 100 g de skyr tiennent dans un seul pot de 800 g).
+function cartItems(results) {
+  const byEan = new Map();
+  for (const r of results) {
+    if (!r.product || !r.packs) continue;
+    const entry = byEan.get(r.product.ean) || { p: r.product, used: 0 };
+    entry.used += r.used;
+    byEan.set(r.product.ean, entry);
+  }
+  return [...byEan.values()].map(({ p, used }) => [p.ean, packsFor(p, used), p.nom]);
+}
+
+function cartUrl() {
+  const order = {
+    v: 1,
+    nom: $("recipe-name").value.trim() || "Recette",
+    magasin: state.magasin.ref,
+    nomMagasin: state.magasin.nom,
+    articles: cartItems(state.lastResults),
+  };
+  // set-store choisit d'abord le bon Drive ; l'ancre est conservée après la redirection
+  return `https://www.carrefour.fr/set-store/${encodeURIComponent(state.magasin.ref)}#recette-macros=${encodeRecipe(order)}`;
+}
+
+function setupDone() {
+  try { return localStorage.getItem(CART_SETUP_KEY) === "1"; } catch { return false; }
+}
+
+async function prepareBookmarklet() {
+  try {
+    const code = await (await fetch("carrefour-panier.js", { cache: "no-cache" })).text();
+    $("bookmarklet").href = "javascript:" + encodeURIComponent(`window.__recetteMacrosBookmarklet=1;${code}`);
+  } catch { /* le favori reste inactif, l'option 1 fonctionne toujours */ }
+}
+
+function sendToCart() {
+  if (setupDone()) {
+    window.open(cartUrl(), "_blank", "noopener");
+    return;
+  }
+  const dialog = $("cart-dialog");
+  prepareBookmarklet();
+  dialog.addEventListener("close", function onClose() {
+    dialog.removeEventListener("close", onClose);
+    if (dialog.returnValue !== "send") return;
+    if ($("cart-dialog-skip").checked) {
+      try { localStorage.setItem(CART_SETUP_KEY, "1"); } catch { /* sans effet */ }
+    }
+    window.open(cartUrl(), "_blank", "noopener");
+  });
+  dialog.showModal();
+}
+
 // ---------- Interface ----------
 
 function showTab(name) {
@@ -388,6 +459,11 @@ function bind() {
     const url = `${location.origin}${location.pathname}#r=${encodeRecipe(currentRecipe())}`;
     history.replaceState(null, "", url);
     try { await navigator.clipboard.writeText(url); toast("Lien copié."); } catch { toast("Lien prêt dans la barre d'adresse."); }
+  });
+  $("send-cart").addEventListener("click", sendToCart);
+  $("bookmarklet").addEventListener("click", (e) => {
+    e.preventDefault();
+    toast("Glissez ce bouton dans la barre de favoris, ne cliquez pas dessus ici.");
   });
   $("clear-recipe").addEventListener("click", () => loadRecipe({ nom: "", portions: 2, texte: "", choix: {} }));
 
