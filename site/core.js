@@ -206,8 +206,39 @@ const Core = (() => {
   const GOALS = {
     seche: { label: "Sèche", hint: "perdre du gras en gardant le muscle", kcal: 0.85, proteines: 2.2 },
     maintien: { label: "Maintien", hint: "garder sa forme", kcal: 1, proteines: 1.8 },
+    recompo: { label: "Recomposition", hint: "perdre du gras et prendre du muscle", kcal: 0.9, proteines: 2.2 },
     masse: { label: "Prise de masse", hint: "gagner du muscle", kcal: 1.1, proteines: 2.0 },
   };
+
+  // Note de 0 à 100 : à quel point une recette sert l'objectif, une fois la portion adaptée au repas idéal.
+  // - protéines : part des kcal venant des protéines (on vise 30 à 35 % en sèche ou recomposition) ;
+  // - adéquation : kcal de la portion adaptée (au plus ×2) comparées au repas idéal ;
+  // - lipides : pénalité au-delà de 35 % des kcal ;
+  // - coût : moins cher, mieux c'est (à 4 € la portion adaptée, ce critère vaut la moitié).
+  // Collations et desserts sont comparés à une collation (12 % des besoins du jour), pas à un repas.
+  const SCORE_WEIGHTS = {
+    seche: { proteines: 0.45, fit: 0.2, lipides: 0.15, cout: 0.2 },
+    recompo: { proteines: 0.45, fit: 0.25, lipides: 0.1, cout: 0.2 },
+    maintien: { proteines: 0.3, fit: 0.3, lipides: 0.15, cout: 0.25 },
+    masse: { proteines: 0.3, fit: 0.4, lipides: 0.1, cout: 0.2 },
+  };
+  function recipeScore(perPortion, { daily, meals = 3, goal = "maintien", snack = false }) {
+    const [kcal, p, , l] = perPortion.macros;
+    if (!daily || !(kcal > 0)) return null;
+    const target = snack ? { kcal: daily.kcal * 0.12 } : mealTarget(daily, meals);
+    const size = portionsForTarget(kcal, target);
+    const proteinShare = (p * 4) / kcal;
+    const fatShare = (l * 9) / kcal;
+    const parts = {
+      proteines: Math.min(1, proteinShare / (goal === "masse" ? 0.28 : 0.35)),
+      fit: Math.max(0, 1 - Math.abs(1 - (kcal * size) / target.kcal)),
+      lipides: Math.max(0, 1 - Math.max(0, fatShare - 0.35) * 3),
+      cout: 1 / (1 + (perPortion.cost * size) / 4),
+    };
+    const w = SCORE_WEIGHTS[goal] || SCORE_WEIGHTS.maintien;
+    const score = Object.keys(w).reduce((sum, k) => sum + w[k] * parts[k], 0);
+    return { score: Math.round(score * 100), size, parts, proteinesAdaptees: p * size, kcalAdaptees: kcal * size };
+  }
 
   // Mifflin-St Jeor, puis niveau d'activité et objectif. Lipides : au moins 0,8 g/kg et 25 % des kcal ;
   // glucides : le reste.
@@ -263,7 +294,7 @@ const Core = (() => {
   return {
     normalize, words, queryTokens, relevance, loadCatalogue, search, proteinPerEuro, genericMacros,
     parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
-    computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal,
+    computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     encode, decode, cartUrl,
   };
 })();

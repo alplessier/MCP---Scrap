@@ -18,16 +18,24 @@ Inspiré de la simplicité de Jow, avec en plus la partie nutrition et sport :
 
 | Page | Contenu |
 |---|---|
-| **Recettes** | Catalogue de recettes sportives (`site/recettes.json`) en grandes cartes : prix par personne, protéines, kcal. Filtres (Protéiné, Après la séance, Prise de masse, Sèche, Petit-déj, Végétarien…) et recherche. Le bouton **+** ajoute au menu. |
+| **Recettes** | 123 recettes sportives (`site/recettes.json`) en grandes cartes : prix par personne, protéines, kcal. Filtres (Perte de gras, Prise de muscle, Gourmand, Protéiné, Après la séance, Petit-déj, Collation & dessert, Meal prep, Végétarien, Moins de 20 min, Petit budget) et recherche. Le bouton **+** ajoute au menu. Avec un profil, l'accueil affiche **le top 3 pour vous** dans chaque filtre et les filtres sont triés par pertinence. |
 | **Fiche recette** | Nombre de couverts, **« Adapter à mon objectif »** (taille de portion calée sur vos besoins), macros comparées à un repas idéal, produits du Drive modifiables, mode **« Passer en cuisine »** étape par étape. |
 | **Menu** | Les recettes de la semaine, leurs couverts, le coût total et la moyenne des macros par repas. |
 | **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour. |
-| **Profil** | Âge, poids, taille, activité, objectif (sèche, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor). |
+| **Profil** | Âge, poids, taille, activité, objectif (sèche, recomposition, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor). |
 | **Créer ma recette** | Le mode libre : un ingrédient par ligne, chiffré au Drive, enregistré dans « Mes recettes ». |
 
 Tout est enregistré dans le navigateur (menu, profil, recettes perso). Les calculs sont dans
-`site/core.js`, testés avec Node (`node --test tests/`), et un test vérifie que chaque ingrédient des
+`site/core.js`, testés avec Node (`node --test tests/site_core.test.js`), et un test vérifie que chaque ingrédient des
 recettes trouve un produit du Drive avec des macros.
+
+### Note de pertinence (« Le top 3 pour vous »)
+
+Chaque recette reçoit une note sur 100 pour l'objectif du profil, calculée sur la portion adaptée à
+votre repas idéal (au plus ×2) : part des calories venant des protéines, écart au repas idéal, part
+des lipides au-delà de 35 % et coût. Les pondérations dépendent de l'objectif (`SCORE_WEIGHTS` dans
+`site/core.js`). Les collations sont comparées à une collation (12 % des besoins du jour), et les
+rangées de repas ne proposent pas de collation ni de petit-déj.
 
 ### Ajouter une recette au catalogue
 
