@@ -212,3 +212,16 @@ def test_suspicious_rayon_keeps_previous_products(tmp_path, monkeypatch):
     # Chute brutale (10 produits au lieu de 60) : même traitement
     rayon_items["pains"] = [api_item(str(i), 1.0) for i in range(10)]
     assert cat.update_catalogue(object(), "575", ["pains"], tmp_path, log=lambda *_: None)["retires"] == 0
+
+
+def test_site_javascript():
+    """Lance les tests Node de site/core.js et des recettes (ignoré si Node n'est pas installé)."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js absent")
+    root = Path(__file__).resolve().parent.parent
+    result = subprocess.run([node, "--test", str(root / "tests" / "site_core.test.js")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

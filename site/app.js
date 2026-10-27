@@ -1,47 +1,59 @@
-// Recettes & macros — tout est calculé dans le navigateur à partir de data/catalogue.json
-// (relevé hebdomadaire du Drive). Aucune requête vers Carrefour ou Firecrawl n'est faite ici.
+// Recettes & macros : affichage et navigation. La logique (recherche, calculs, objectifs) est dans core.js.
+// Tout est calculé dans le navigateur à partir du relevé hebdomadaire du Drive : aucune requête n'est payante.
 "use strict";
 
-const STOPWORDS = new Set(["de", "du", "des", "la", "le", "les", "au", "aux", "en", "et", "a", "d", "l"]);
-const TO_GRAMS = { g: 1, kg: 1000, ml: 1, cl: 10, l: 1000 };
-const LINE_RE = /^\s*(\d+(?:[.,]\d+)?)\s*(kg|g|cl|ml|l|pcs?|pièces?|x)?\.?\s+(.+?)(?:\s+@\s*(\d+(?:[.,]\d+)?)\s*g)?(?:\s+#(\d{8,14}))?\s*$/i;
-const MAX_CHOICES = 8;
-const STORAGE_KEY = "recette-macros:recettes";
+const C = Core;
+const STATE_KEY = "recette-macros:v2";
+const OLD_SAVED_KEY = "recette-macros:recettes";
 const CART_SETUP_KEY = "recette-macros:panier-installe";
-
-const state = {
-  products: [],
-  generic: [],
-  pins: {}, // nom d'ingrédient normalisé -> EAN choisi à la main
-  strategy: "pertinence",
-  magasin: { ref: "575", nom: "" },
-  lastResults: [],
+const RAYONS = {
+  "fruits-et-legumes": "Fruits et légumes", "viandes-et-poissons": "Viandes et poissons", cremerie: "Crèmerie",
+  "charcuterie-traiteur": "Charcuterie et traiteur", surgeles: "Surgelés", "epicerie-salee": "Épicerie salée",
+  "epicerie-sucree": "Épicerie sucrée", "pains-et-patisseries": "Pains", boissons: "Boissons",
+  "vegetal-vegetarien": "Végétal", "dietetique-preferences-alimentaires": "Nutrition sportive",
 };
+const PERSO_COLORS = ["#ffe5df", "#e3f4dc", "#e7e2fb", "#fff1c7", "#dcecf7"];
 
-// ---------- Texte ----------
+// ---------- État (enregistré dans le navigateur) ----------
+// menu : { id → { p: couverts, t: taille de portion } } ; pins : { clé d'ingrédient → EAN }
 
-// « Œufs » s'écrit avec une ligature, que NFKD ne décompose pas
-const normalize = (s) => s.toLowerCase().replace(/œ/g, "oe").replace(/æ/g, "ae").normalize("NFKD").replace(/[̀-ͯ]/g, "");
-const words = (s) => normalize(s).match(/[a-z0-9]+/g) || [];
-const stem = (t) => (t.length > 3 ? t.replace(/[sx]+$/, "") : t);
-const queryTokens = (q) => words(q).filter((t) => !STOPWORDS.has(t)).map(stem);
+const state = loadState();
+let cat = null;
+let book = { tags: {}, recettes: [], byId: new Map() };
+const ui = { tag: null, query: "", view: {}, cookStep: 0 };
 
-// Position moyenne des mots de la requête dans le nom (plus c'est tôt, plus c'est pertinent), ou -1.
-function relevance(tokens, nameWords) {
-  let score = 0;
-  for (const t of tokens) {
-    const i = nameWords.findIndex((w) => w.startsWith(t));
-    if (i < 0) return -1;
-    score += i;
-  }
-  return score + nameWords.length * 0.05;
+function loadState() {
+  const base = { menu: {}, pins: {}, owned: [], profile: null, custom: [], strategy: "pertinence" };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STATE_KEY));
+    if (saved) return { ...base, ...saved };
+    // anciennes recettes du mode libre (première version du site)
+    const old = JSON.parse(localStorage.getItem(OLD_SAVED_KEY)) || [];
+    base.custom = old.map((r, i) => customFromText(r.nom, r.portions, r.texte, i));
+  } catch { /* stockage indisponible : on garde l'état vide */ }
+  return base;
+}
+function save() {
+  try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch { /* navigation privée, etc. */ }
+  updateCounts();
 }
 
-// ---------- Formatage ----------
+function customFromText(nom, portions, texte, i = 0) {
+  return {
+    id: `perso-${Date.now().toString(36)}-${i}`, nom: nom || "Ma recette", emoji: "🧑‍🍳",
+    couleur: PERSO_COLORS[Math.abs(hash(nom || "")) % PERSO_COLORS.length], temps: null,
+    portions: Math.max(1, +portions || 1), tags: ["perso"], ingredients: C.parseLines(texte || ""), etapes: [], perso: true,
+  };
+}
+const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
 
+// ---------- Outils ----------
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const euro = (v) => (v == null ? "—" : v.toLocaleString("fr-FR", { style: "currency", currency: "EUR" }));
 const num = (v, d = 0) => (v == null ? "—" : v.toLocaleString("fr-FR", { maximumFractionDigits: d, minimumFractionDigits: d }));
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const portionsLabel = (n) => `${num(n, n % 1 ? 1 : 0)} ${n > 1 ? "couverts" : "couvert"}`;
 
 function unitLabel(p) {
   if (p.prix_unite == null) return "";
@@ -49,351 +61,530 @@ function unitLabel(p) {
   return `${num(p.prix_unite, 2)} €/${u}`;
 }
 
-// ---------- Catalogue ----------
-
-async function loadCatalogue() {
-  const res = await fetch("data/catalogue.json", { cache: "no-cache" });
-  if (!res.ok) throw new Error(`catalogue introuvable (${res.status})`);
-  const data = await res.json();
-  const cols = data.colonnes;
-  state.products = data.produits.map((row) => {
-    const p = Object.fromEntries(cols.map((c, i) => [c, row[i]]));
-    p.words = words(`${p.nom} ${p.categorie || ""}`);
-    p.nameWords = words(p.nom);
-    p.categoryWords = words(p.categorie || "");
-    return p;
-  });
-  state.magasin = data.magasin;
-  state.generic = Object.entries(data.generique).map(([k, m]) => ({ tokens: queryTokens(k), macros: m }));
-  const date = new Date(data.maj).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
-  document.getElementById("store-info").textContent =
-    `${data.magasin.nom} · relevé du ${date} · ${state.products.length.toLocaleString("fr-FR")} produits`;
-}
-
-function search(query, { usableFor = null, sort = "pertinence" } = {}) {
-  const tokens = queryTokens(query);
-  if (!tokens.length) return [];
-  const hits = [];
-  for (const p of state.products) {
-    if (usableFor && !isUsable(usableFor, p)) continue;
-    // le nom d'abord ; la catégorie seulement pour la recherche du catalogue
-    let r = relevance(tokens, p.nameWords);
-    if (r < 0 && !usableFor) {
-      const inCategory = relevance(tokens, p.words);
-      if (inCategory >= 0) r = inCategory + 5;
-    }
-    // bonus quand la catégorie correspond aussi : « oeufs » → catégorie Œufs, pas Kinder
-    if (r >= 0) hits.push({ p, r: r - (relevance(tokens, p.categoryWords) >= 0 ? 1 : 0) });
-  }
-  const proteinPerEuro = (p) => (p.macros && p.prix_unite && p.unite !== "PIECE" ? (p.macros[1] * 10) / p.prix_unite : -1);
-  const sorters = {
-    pertinence: (a, b) => a.r - b.r || (a.p.prix_unite ?? 1e9) - (b.p.prix_unite ?? 1e9),
-    "prix-kg": (a, b) => (a.p.prix_unite ?? 1e9) - (b.p.prix_unite ?? 1e9),
-    "proteines-euro": (a, b) => proteinPerEuro(b.p) - proteinPerEuro(a.p),
-    proteines: (a, b) => (b.p.macros?.[1] ?? -1) - (a.p.macros?.[1] ?? -1),
-  };
-  return hits.sort(sorters[sort] || sorters.pertinence).map((h) => h.p);
-}
-
-function genericMacros(name) {
-  const nameWords = words(name);
-  const hit = state.generic.find((g) => g.tokens.every((t) => nameWords.some((w) => w.startsWith(t))));
-  return hit ? hit.macros : null;
-}
-
-// ---------- Recette ----------
-
-function parseLine(raw) {
-  const m = raw.match(LINE_RE);
-  if (!m) return { raw, error: "Ligne non comprise — exemple : « 200 g blanc de poulet »" };
-  const qty = parseFloat(m[1].replace(",", "."));
-  const unit = (m[2] || "").toLowerCase();
-  const pieceWeight = m[4] ? parseFloat(m[4].replace(",", ".")) : null;
-  const ing = { raw, name: m[3].trim(), ean: m[5] || null, grams: null, pieces: null };
-  if (unit in TO_GRAMS) ing.grams = qty * TO_GRAMS[unit];
-  else {
-    ing.pieces = qty;
-    if (pieceWeight) ing.grams = qty * pieceWeight;
-  }
-  return ing;
-}
-
-function isUsable(ing, p) {
-  if (p.prix_unite == null) return false;
-  if (p.unite === "PIECE") return ing.pieces != null;
-  return ing.grams != null && (p.unite === "KG" || p.unite === "L");
-}
-
-function candidatesFor(ing) {
-  const ranked = search(ing.name, { usableFor: ing }).slice(0, 30);
-  const top = ranked.slice(0, MAX_CHOICES);
-  if (state.strategy === "moins-cher") {
-    // les moins chers parmi les produits pertinents (pas parmi tout le rayon)
-    top.sort((a, b) => a.prix_unite - b.prix_unite);
-  }
-  return top;
-}
-
-// Paquets entiers à acheter (tolérance de 2 % pour les arrondis du prix au kilo affiché)
-function packsFor(p, used) {
-  const pack = p.prix / p.prix_unite;
-  return pack > 0 ? Math.max(1, Math.ceil(used / pack - 0.02)) : null;
-}
-
-function costLine(ing, p) {
-  const out = { ing, product: p, cost: null, used: null, packs: null, macros: null, generic: false };
-  if (p) {
-    // quantité utilisée dans l'unité du prix (kg, L ou pièces)
-    out.used = p.unite === "PIECE" ? ing.pieces : ing.grams != null ? ing.grams / 1000 : null;
-    if (out.used != null) {
-      out.cost = out.used * p.prix_unite;
-      out.packs = packsFor(p, out.used);
-    }
-  }
-  let per100 = p && p.macros;
-  if (!per100) {
-    per100 = genericMacros(ing.name);
-    out.generic = !!per100;
-  }
-  if (per100 && ing.grams != null) out.macros = per100.map((v) => (v * ing.grams) / 100);
-  return out;
-}
-
-function computeRecipe(text) {
-  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
-  return lines.map((raw) => {
-    const ing = parseLine(raw);
-    if (ing.error) return { ing, error: ing.error };
-    const choices = candidatesFor(ing);
-    const pinned = ing.ean || state.pins[normalize(ing.name)];
-    let product = pinned ? state.products.find((p) => p.ean === pinned) : null;
-    if (product && !choices.includes(product)) choices.unshift(product);
-    product = product || choices[0] || null;
-    return { ...costLine(ing, product), choices };
-  });
-}
-
-// ---------- Rendu de la recette ----------
-
-const $ = (id) => document.getElementById(id);
-
-function renderRecipe() {
-  const text = $("recipe-text").value;
-  const portions = Math.max(1, parseInt($("recipe-portions").value, 10) || 1);
-  const results = computeRecipe(text);
-  const container = $("lines");
-  container.replaceChildren();
-  const tpl = $("line-template");
-
-  let cost = 0;
-  const total = [0, 0, 0, 0];
-  const missingPrice = [], missingMacros = [];
-
-  for (const r of results) {
-    const node = tpl.content.firstElementChild.cloneNode(true);
-    node.querySelector(".line-ingredient").textContent = r.ing.raw;
-    const select = node.querySelector(".line-product");
-    const meta = node.querySelector(".line-meta");
-
-    if (r.error) {
-      node.classList.add("missing");
-      select.remove();
-      meta.innerHTML = `<span class="line-error">${esc(r.error)}</span>`;
-      container.append(node);
-      continue;
-    }
-    if (!r.product) {
-      node.classList.add("missing");
-      select.remove();
-      meta.innerHTML = `<span class="line-error">Aucun produit trouvé au Drive pour « ${esc(r.ing.name)} »` +
-        (r.ing.pieces != null && r.ing.grams == null ? " vendu à la pièce — essayez d'indiquer un poids (ex. @60g)" : "") + "</span>";
-    } else {
-      for (const p of r.choices) {
-        const opt = new Option(`${p.nom} — ${euro(p.prix)} (${unitLabel(p)})${p.promo ? " · " + p.promo : ""}`, p.ean);
-        opt.selected = p === r.product;
-        select.append(opt);
-      }
-      select.addEventListener("change", () => {
-        state.pins[normalize(r.ing.name)] = select.value;
-        renderRecipe();
-      });
-      const m = r.macros;
-      meta.innerHTML = [
-        r.packs ? `${r.packs} × ${esc(r.product.conditionnement || "paquet")}` : "",
-        m ? `${num(m[0])} kcal` : "macros inconnues",
-        m ? `P ${num(m[1], 1)} g · G ${num(m[2], 1)} g · L ${num(m[3], 1)} g` : "",
-        r.generic ? `<span class="badge generic" title="Produit sans fiche Open Food Facts : valeurs moyennes Ciqual">* générique</span>` : "",
-        r.product.promo ? `<span class="badge promo">${esc(r.product.promo)}</span>` : "",
-        r.product.url ? `<a href="${esc(r.product.url)}" target="_blank" rel="noopener">voir sur carrefour.fr</a>` : "",
-      ].filter(Boolean).map((s) => `<span>${s}</span>`).join("");
-    }
-    node.querySelector(".line-cost").textContent = r.cost != null ? euro(r.cost) : "prix inconnu";
-
-    if (r.cost != null) cost += r.cost; else missingPrice.push(r.ing.raw);
-    if (r.macros) r.macros.forEach((v, i) => (total[i] += v)); else missingMacros.push(r.ing.raw);
-    container.append(node);
-  }
-
-  const has = results.some((r) => !r.error);
-  $("summary").hidden = !has;
-  if (has) {
-    const per = total.map((v) => v / portions);
-    $("s-cost").textContent = euro(cost / portions);
-    $("s-cost-total").textContent = `${euro(cost)} pour ${portions} portion${portions > 1 ? "s" : ""}`;
-    $("s-kcal").textContent = `${num(per[0])} kcal`;
-    $("s-kcal-total").textContent = `${num(total[0])} kcal au total`;
-    $("s-p").textContent = `${num(per[1])} g`;
-    $("s-g").textContent = `${num(per[2])} g`;
-    $("s-l").textContent = `${num(per[3])} g`;
-    const kcalFromMacros = [per[1] * 4, per[2] * 4, per[3] * 9];
-    const sum = kcalFromMacros.reduce((a, b) => a + b, 0) || 1;
-    $("s-bar").querySelectorAll("i").forEach((el, i) => (el.style.width = `${(kcalFromMacros[i] / sum) * 100}%`));
-  }
-
-  state.lastResults = results;
-  const items = cartItems(results);
-  $("send-cart").disabled = !items.length;
-  if (has) {
-    const prices = new Map(results.filter((r) => r.product).map((r) => [r.product.ean, r.product.prix]));
-    $("s-bought").textContent = euro(items.reduce((sum, [ean, packs]) => sum + packs * prices.get(ean), 0));
-  }
-
-  const notes = [];
-  if (missingPrice.length) notes.push(`Prix non calculé pour : ${missingPrice.join(", ")}.`);
-  if (missingMacros.length) notes.push(`Macros manquantes pour : ${missingMacros.join(", ")}.`);
-  $("notes").textContent = notes.join(" ");
-  return { cost, total, portions };
-}
-
-// ---------- Catalogue (onglet Produits) ----------
-
-function renderProducts() {
-  const q = $("product-query").value;
-  const sort = $("product-sort").value;
-  const list = $("products");
-  if (!queryTokens(q).length) {
-    list.replaceChildren();
-    $("product-count").textContent = "Tapez un nom de produit.";
-    return;
-  }
-  const hits = search(q, { sort });
-  $("product-count").textContent = `${hits.length.toLocaleString("fr-FR")} produit${hits.length > 1 ? "s" : ""}` +
-    (hits.length > 60 ? " — 60 premiers affichés" : "");
-  list.innerHTML = hits.slice(0, 60).map((p) => {
-    const m = p.macros;
-    const ppe = m && p.prix_unite && p.unite !== "PIECE" ? (m[1] * 10) / p.prix_unite : null;
-    return `<article class="product">
-      ${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" width="56" height="56">` : "<span></span>"}
-      <div>
-        <h3>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.nom)}</a>` : esc(p.nom)}</h3>
-        <div><span class="price">${euro(p.prix)}</span> <span class="per-unit">${esc(unitLabel(p))}</span></div>
-        <div class="pack">${esc(p.conditionnement)}</div>
-        ${p.promo ? `<span class="badge promo">${esc(p.promo)}</span>` : ""}
-      </div>
-      <div class="nutri">${m
-        ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span>` +
-          (ppe != null ? `<span title="grammes de protéines pour 1 €">${num(ppe, 0)} g prot./€</span>` : "")
-        : "<span>macros non renseignées</span>"} <span>/ 100 g</span></div>
-    </article>`;
-  }).join("");
-}
-
-// ---------- Recettes enregistrées & partage ----------
-
-function readSaved() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
-}
-function writeSaved(list) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); return true; } catch { return false; }
-}
-
-function currentRecipe() {
-  return {
-    nom: $("recipe-name").value.trim() || "Recette sans nom",
-    portions: Math.max(1, parseInt($("recipe-portions").value, 10) || 1),
-    texte: $("recipe-text").value,
-    choix: state.pins,
-  };
-}
-
-function loadRecipe(r) {
-  $("recipe-name").value = r.nom || "";
-  $("recipe-portions").value = r.portions || 1;
-  $("recipe-text").value = r.texte || "";
-  state.pins = { ...(r.choix || {}) };
-  renderRecipe();
-}
-
 function toast(msg) {
-  $("toast").textContent = msg;
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => ($("toast").textContent = ""), 3000);
+  toast.t = setTimeout(() => el.classList.remove("show"), 2600);
 }
 
-function encodeRecipe(r) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(r)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function decodeRecipe(s) {
-  return JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/")))));
+function allRecipes() { return [...state.custom, ...book.recettes]; }
+function recipeById(id) { return state.custom.find((r) => r.id === id) || book.byId.get(id); }
+
+// ---------- Calculs ----------
+
+function targets() {
+  const daily = state.profile ? C.dailyTargets(state.profile) : null;
+  return { daily, meal: daily ? C.mealTarget(daily, state.profile.repas || 3) : null };
 }
 
-function renderSaved() {
-  const saved = readSaved();
-  $("saved-count").textContent = saved.length || "";
-  const box = $("saved");
-  if (!saved.length) {
-    box.innerHTML = `<p class="muted">Aucune recette enregistrée pour l'instant.</p>`;
+// Couverts et taille de portion : ceux du menu si la recette y est, sinon ceux de la fiche
+function servingOf(r) {
+  return state.menu[r.id] || ui.view[r.id] || { p: r.portions, t: 1 };
+}
+
+function compute(r, serving = servingOf(r)) {
+  const factor = (serving.p * serving.t) / r.portions;
+  const lines = C.computeLines(cat, r.ingredients, { factor, pins: state.pins, strategy: state.strategy, keyPrefix: `${r.id}:` });
+  const t = C.totals(lines);
+  return {
+    lines, ...t, serving,
+    perPortion: { cost: t.cost / serving.p, macros: t.macros.map((v) => v / serving.p) },
+  };
+}
+
+// Valeurs d'une portion standard, pour les cartes (mises en cache : le catalogue ne change pas)
+const statsCache = new Map();
+function stats(r) {
+  const key = `${r.id}|${r.ingredients.join("\n")}|${state.strategy}`;
+  if (!statsCache.has(key)) statsCache.set(key, compute(r, { p: r.portions, t: 1 }).perPortion);
+  return statsCache.get(key);
+}
+
+// Une collation ne remplace pas un repas : pas de conseil de portion
+const isSnack = (r) => (r.tags || []).includes("collation");
+
+function fitLabel(r, kcalPP, meal) {
+  if (!meal || !kcalPP || isSnack(r)) return "";
+  if (C.tooLightForMeal(kcalPP, meal)) return `<span class="fit">Léger : à accompagner</span>`;
+  const t = C.portionsForTarget(kcalPP, meal);
+  if (t === 1) return `<span class="fit ok">✓ Parfait pour 1 repas</span>`;
+  return `<span class="fit">Portion conseillée ×${num(t, 2)}</span>`;
+}
+
+// ---------- Rendu commun ----------
+
+function tileHtml(r, cls = "") {
+  return `<div class="tile ${cls}" style="background:${esc(r.couleur)}" aria-hidden="true">${esc(r.emoji)}</div>`;
+}
+
+function cardHtml(r, meal) {
+  const s = stats(r);
+  const inMenu = !!state.menu[r.id];
+  return `<article class="card">
+    <button class="add" data-action="toggle-menu" data-id="${esc(r.id)}" aria-pressed="${inMenu}"
+      aria-label="${inMenu ? "Retirer du menu" : "Ajouter au menu"} : ${esc(r.nom)}">${inMenu ? "✓" : "+"}</button>
+    <a href="#/recette/${encodeURIComponent(r.id)}" style="color:inherit;text-decoration:none;display:contents">
+      ${tileHtml(r)}
+      <div class="card-body">
+        <div class="card-title">${esc(r.nom)}</div>
+        <div class="card-meta">
+          ${r.temps ? `<span>⏱ ${r.temps} min</span>` : ""}
+          <span>${euro(s.cost)}/pers.</span>
+        </div>
+        <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span></div>
+        ${fitLabel(r, s.macros[0], meal)}
+      </div>
+    </a>
+  </article>`;
+}
+
+function stepperHtml(action, id, label, cls = "") {
+  return `<div class="stepper ${cls}" role="group" aria-label="Nombre de couverts">
+    <button type="button" data-action="${action}" data-id="${esc(id)}" data-delta="-1" aria-label="Un couvert de moins">−</button>
+    <output aria-live="polite">${label}</output>
+    <button type="button" data-action="${action}" data-id="${esc(id)}" data-delta="1" aria-label="Un couvert de plus">+</button>
+  </div>`;
+}
+
+function macroBars(macros, meal) {
+  const rows = [["Protéines", "p", 1], ["Glucides", "g", 2], ["Lipides", "l", 3]];
+  return rows.map(([label, cls, i]) => {
+    const target = meal ? [null, meal.proteines, meal.glucides, meal.lipides][i] : null;
+    const pct = target ? Math.min(100, (macros[i] / target) * 100) : Math.min(100, macros[i]);
+    return `<div class="macro"><span>${label}</span>
+      <div class="bar ${cls}" role="img" aria-label="${label} : ${num(macros[i])} g${target ? ` sur ${num(target)} g visés` : ""}"><i style="width:${pct}%"></i></div>
+      <small>${num(macros[i])} g${target ? ` / ${num(target)}` : ""}</small></div>`;
+  }).join("");
+}
+
+function ingredientsHtml(lines) {
+  return `<ul class="ingredients">${lines.map((x) => {
+    if (x.error) return `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span></div><div class="error">${esc(x.error)}</div></li>`;
+    if (!x.product) {
+      return `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">—</span></div>
+        <div class="error">Aucun produit trouvé au Drive${x.ing.pieces != null && x.ing.grams == null ? " (indiquez un poids : « 2 oeufs @60g »)" : ""}</div></li>`;
+    }
+    const options = x.choices.map((p) =>
+      `<option value="${esc(p.ean)}"${p === x.product ? " selected" : ""}>${esc(p.nom)} — ${euro(p.prix)} (${esc(unitLabel(p))})${p.promo ? " · " + esc(p.promo) : ""}</option>`).join("");
+    return `<li>
+      <div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">${euro(x.cost)}</span></div>
+      <select class="product-select" data-action="pin" data-key="${esc(x.key)}" aria-label="Produit pour ${esc(x.ing.name)}">${options}</select>
+      <div class="ing-note">${x.macros ? `${num(x.macros[0])} kcal · P ${num(x.macros[1], 1)} g` : "macros inconnues"}${x.generic ? " · valeurs moyennes *" : ""}${x.product.promo ? ` · <span class="promo">${esc(x.product.promo)}</span>` : ""}</div>
+    </li>`;
+  }).join("")}</ul>`;
+}
+
+// ---------- Pages ----------
+
+function viewRecipes() {
+  const { daily, meal } = targets();
+  const q = C.queryTokens(ui.query);
+  const list = allRecipes().filter((r) => {
+    if (ui.tag && !(r.tags || []).includes(ui.tag)) return false;
+    if (!q.length) return true;
+    const w = C.words(`${r.nom} ${r.ingredients.join(" ")} ${(r.tags || []).map((t) => book.tags[t] || t).join(" ")}`);
+    return q.every((t) => w.some((x) => x.startsWith(t)));
+  });
+  const tags = Object.entries({ ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
+  return `
+    <section class="hero">
+      <div>
+        <h1>On mange quoi ce soir ?</h1>
+        <p>Des recettes pensées pour vos objectifs, au prix du Drive Jaude, et votre panier rempli en un clic.</p>
+        ${daily
+          ? `<a class="goal-pill" href="#/profil">🎯 ${C.GOALS[state.profile.objectif]?.label || "Objectif"} · ${num(daily.kcal)} kcal · ${num(daily.proteines)} g de protéines / jour</a>`
+          : `<a class="goal-pill" href="#/profil">💪 Calculer mes besoins sportifs →</a>`}
+      </div>
+      <div class="hero-art" aria-hidden="true">🥗</div>
+    </section>
+    <div class="toolbar">
+      <label class="sr-only" for="recipe-search">Rechercher une recette</label>
+      <input id="recipe-search" class="search" type="search" placeholder="Poulet, pâtes, petit-déj…" value="${esc(ui.query)}" autocomplete="off">
+      <div class="chips" role="group" aria-label="Filtrer">
+        <button class="chip" data-action="tag" data-tag="" aria-pressed="${!ui.tag}">Toutes</button>
+        ${tags.map(([k, v]) => `<button class="chip" data-action="tag" data-tag="${esc(k)}" aria-pressed="${ui.tag === k}">${esc(v)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="grid">
+      ${list.map((r) => cardHtml(r, meal)).join("")}
+      <a class="card create" href="#/creer">
+        <div class="tile" aria-hidden="true">✍️</div>
+        <div class="card-body"><div class="card-title">Créer ma recette</div><div class="card-meta"><span>Mode libre : vos ingrédients, chiffrés au Drive</span></div></div>
+      </a>
+    </div>
+    ${list.length ? "" : `<div class="empty"><div class="big-emoji">🔍</div><p>Aucune recette ne correspond.</p></div>`}`;
+}
+
+function viewRecipe(id) {
+  const r = recipeById(id);
+  if (!r) return notFound();
+  const { meal } = targets();
+  const res = compute(r);
+  const s = res.serving;
+  const inMenu = !!state.menu[r.id];
+  const per = res.perPortion;
+  const kcalStd = stats(r).macros[0];
+  const adapt = meal && !isSnack(r) ? C.portionsForTarget(kcalStd, meal) : null;
+  const light = meal && !isSnack(r) && C.tooLightForMeal(kcalStd, meal);
+  const adapted = adapt !== null && adapt !== 1 && s.t === adapt;
+  return `
+    <a class="back" href="#/">← Recettes</a>
+    <div class="detail">
+      <div>
+        ${tileHtml(r, "big")}
+        <div class="panel" style="margin-top:16px">
+          <h2>Ingrédients</h2>
+          ${ingredientsHtml(res.lines)}
+          <p class="hint">Produits et prix du ${esc(cat.magasin.nom)}. Changez de produit dans la liste si besoin.</p>
+        </div>
+      </div>
+      <div>
+        <div class="tags">${(r.tags || []).map((t) => `<span class="tag">${esc(book.tags[t] || (t === "perso" ? "Ma recette" : t))}</span>`).join("")}</div>
+        <h1>${esc(r.nom)}</h1>
+        <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(per.cost)} par personne · ${euro(res.cost)} au total</p>
+        <div class="panel">
+          <div class="row">
+            ${stepperHtml("servings", r.id, portionsLabel(s.p))}
+            ${meal && isSnack(r) ? `<span class="fit">Collation : en plus de vos repas</span>`
+              : meal
+              ? (adapt === 1 && s.t === 1
+                ? `<span class="fit ok">✓ Portion idéale pour votre objectif</span>`
+                : `<button class="btn small" data-action="adapt" data-id="${esc(r.id)}" data-size="${adapted ? 1 : adapt}">${adapted ? "↺ Portion standard" : `🎯 Adapter à mon objectif (×${num(adapt, 2)})`}</button>`)
+              : `<a class="btn small" href="#/profil">🎯 Définir mon objectif</a>`}
+          </div>
+          ${s.t !== 1 ? `<p class="hint">Portions ×${num(s.t, 2)}, adaptées à votre objectif.</p>` : ""}
+          ${light ? `<p class="hint">Même doublée, cette recette reste légère pour votre objectif : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
+          <div class="kpis">
+            <div class="kpi"><b>${num(per.macros[0])}</b><span>kcal / portion</span></div>
+            <div class="kpi"><b>${num(per.macros[1])} g</b><span>protéines</span></div>
+            <div class="kpi"><b>${euro(per.cost)}</b><span>par personne</span></div>
+          </div>
+          ${macroBars(per.macros, meal)}
+          ${meal ? `<p class="hint">Barres : part d'un repas idéal pour votre objectif (${num(meal.kcal)} kcal, ${num(meal.proteines)} g de protéines).</p>`
+                 : `<p class="hint">Renseignez votre profil pour comparer à vos besoins.</p>`}
+          ${res.missingMacros.length ? `<p class="hint">Macros inconnues pour : ${esc(res.missingMacros.join(", "))}.</p>` : ""}
+        </div>
+        <div class="actions" style="margin-top:16px">
+          <button class="btn primary" data-action="toggle-menu" data-id="${esc(r.id)}">${inMenu ? "✓ Dans mon menu" : "+ Ajouter au menu"}</button>
+          ${r.etapes && r.etapes.length ? `<a class="btn" href="#/cuisine/${encodeURIComponent(r.id)}">👩‍🍳 Passer en cuisine</a>` : ""}
+          <button class="btn" data-action="send-recipe" data-id="${esc(r.id)}">🛒 Panier Carrefour</button>
+          ${r.perso ? `<a class="btn ghost" href="#/creer/${encodeURIComponent(r.id)}">Modifier</a>` : ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+function viewCook(id) {
+  const r = recipeById(id);
+  if (!r || !r.etapes?.length) return notFound();
+  const res = compute(r);
+  const total = r.etapes.length + 1;
+  const i = (ui.cookStep = Math.min(ui.cookStep, total - 1));
+  const body = i === 0
+    ? `<div class="cook-step"><div class="num">Avant de commencer · ${portionsLabel(res.serving.p)}</div>
+        <ul class="ingredients" style="text-align:left;margin-top:12px">${res.lines.map((x) => `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span></div></li>`).join("")}</ul></div>`
+    : `<div class="cook-step"><div class="num">Étape ${i} sur ${total - 1}</div><p>${esc(r.etapes[i - 1])}</p></div>`;
+  return `<div class="cook" role="dialog" aria-label="Passer en cuisine : ${esc(r.nom)}">
+    <div class="cook-top"><strong>${esc(r.emoji)} ${esc(r.nom)}</strong><a class="btn small" href="#/recette/${encodeURIComponent(r.id)}">Fermer</a></div>
+    <div class="cook-body">${body}</div>
+    <div class="dots" aria-hidden="true">${Array.from({ length: total }, (_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div>
+    <div class="cook-nav">
+      <button class="btn" data-action="cook-step" data-delta="-1" ${i === 0 ? "disabled" : ""}>← Précédent</button>
+      ${i < total - 1 ? `<button class="btn primary" data-action="cook-step" data-delta="1">Suivant →</button>`
+                      : `<a class="btn primary" href="#/recette/${encodeURIComponent(r.id)}">Bon appétit ! 🎉</a>`}
+    </div>
+  </div>`;
+}
+
+function menuEntries() {
+  return Object.keys(state.menu).map((id) => recipeById(id)).filter(Boolean).map((r) => ({ r, res: compute(r) }));
+}
+
+function viewMenu() {
+  const entries = menuEntries();
+  const { meal } = targets();
+  if (!entries.length) {
+    return `<div class="page-head"><h1>Mon menu</h1></div>
+      <div class="empty"><div class="big-emoji">📅</div><p>Votre menu est vide. Ajoutez des recettes avec le bouton <strong>+</strong>.</p>
+      <a class="btn primary" href="#/">Choisir des recettes</a></div>`;
+  }
+  let cost = 0, portions = 0;
+  const macros = [0, 0, 0, 0];
+  for (const { res } of entries) {
+    cost += res.cost;
+    portions += res.serving.p;
+    res.macros.forEach((v, i) => (macros[i] += v));
+  }
+  const avg = macros.map((v) => v / portions);
+  return `<div class="page-head"><h1>Mon menu</h1><span class="muted">${entries.length} recette${entries.length > 1 ? "s" : ""} · ${portionsLabel(portions)}</span></div>
+    <div class="two-cols">
+      <div class="menu-list">${entries.map(({ r, res }) => `
+        <article class="menu-item">
+          <a href="#/recette/${encodeURIComponent(r.id)}">${tileHtml(r)}</a>
+          <div>
+            <a href="#/recette/${encodeURIComponent(r.id)}"><div class="card-title">${esc(r.nom)}</div></a>
+            <div class="card-meta"><span>${euro(res.perPortion.cost)}/pers.</span><span class="prot">💪 ${num(res.perPortion.macros[1])} g</span><span>${num(res.perPortion.macros[0])} kcal</span>${res.serving.t !== 1 ? `<span>portions ×${num(res.serving.t, 2)}</span>` : ""}</div>
+          </div>
+          <div class="menu-side">
+            ${stepperHtml("servings", r.id, portionsLabel(res.serving.p), "small")}
+            <button class="link-btn" data-action="toggle-menu" data-id="${esc(r.id)}">Retirer</button>
+          </div>
+        </article>`).join("")}
+      </div>
+      <aside class="panel sticky">
+        <h2>Bilan du menu</h2>
+        <div class="total-line big"><span>Total</span><span>${euro(cost)}</span></div>
+        <div class="total-line"><span>Par personne et par repas</span><span>${euro(cost / portions)}</span></div>
+        <h3 style="font-size:1rem;margin:14px 0 4px">En moyenne, par repas</h3>
+        <div class="total-line"><span>Énergie</span><span>${num(avg[0])} kcal${meal ? ` / ${num(meal.kcal)}` : ""}</span></div>
+        ${macroBars(avg, meal)}
+        ${meal ? "" : `<p class="hint"><a href="#/profil">Renseignez votre profil</a> pour comparer à vos besoins.</p>`}
+        <a class="btn primary block" href="#/courses" style="margin-top:14px">Faire les courses →</a>
+      </aside>
+    </div>`;
+}
+
+function menuShopping() {
+  const entries = menuEntries();
+  const lines = entries.flatMap(({ res }) => res.lines);
+  return { entries, list: C.shoppingList(lines, { exclude: new Set(state.owned) }) };
+}
+
+function viewCourses() {
+  const { entries, list } = menuShopping();
+  if (!entries.length) {
+    return `<div class="page-head"><h1>Courses</h1></div>
+      <div class="empty"><div class="big-emoji">🛒</div><p>Ajoutez des recettes à votre menu : la liste de courses se fait toute seule.</p>
+      <a class="btn primary" href="#/">Choisir des recettes</a></div>`;
+  }
+  const groups = new Map();
+  for (const item of list) {
+    const g = RAYONS[item.product.rayon] || "Autres";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(item);
+  }
+  const toBuy = list.filter((e) => !e.owned);
+  const total = toBuy.reduce((s, e) => s + e.price, 0);
+  return `<div class="page-head"><h1>Courses</h1><span class="muted">${entries.length} recette${entries.length > 1 ? "s" : ""} · ${list.length} produits</span></div>
+    <div class="two-cols">
+      <div>
+        <p class="muted">Cochez ce que vous avez déjà : ce ne sera pas ajouté au panier.</p>
+        ${[...groups].map(([g, items]) => `<div class="shop-group"><h3>${esc(g)}</h3>${items.map((e) => `
+          <label class="shop-item${e.owned ? " owned" : ""}">
+            <input type="checkbox" data-action="owned" data-ean="${esc(e.product.ean)}" ${e.owned ? "checked" : ""} aria-label="J'ai déjà : ${esc(e.product.nom)}">
+            ${e.product.image ? `<img src="${esc(e.product.image)}" alt="" loading="lazy" width="44" height="44">` : `<span class="ph" aria-hidden="true">🛍️</span>`}
+            <span><span class="name">${esc(e.product.nom)}</span><br><span class="sub">${e.packs} × ${esc(e.product.conditionnement || "paquet")} · pour ${esc(e.uses.join(", "))}</span></span>
+            <span class="price">${euro(e.price)}</span>
+          </label>`).join("")}</div>`).join("")}
+      </div>
+      <aside class="panel sticky checkout">
+        <h2>Mon panier</h2>
+        <div class="total-line big"><span>${toBuy.length} produit${toBuy.length > 1 ? "s" : ""}</span><span>${euro(total)}</span></div>
+        <p class="hint">Paquets entiers, aux prix du relevé du ${new Date(cat.maj).toLocaleDateString("fr-FR")}. Les promotions fidélité ne sont pas déduites.</p>
+        <button class="btn primary block" data-action="send-menu" ${toBuy.length ? "" : "disabled"} style="margin-top:12px">🛒 Envoyer au panier Carrefour</button>
+        <p class="hint">Ouvre carrefour.fr sur le Drive Jaude et ajoute ces produits à votre panier, aussi visible dans l'application.</p>
+      </aside>
+    </div>`;
+}
+
+function viewProfil() {
+  const p = state.profile || { sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3 };
+  const { daily, meal } = targets();
+  const seg = (field, options) => `<div class="segmented" role="group">${options.map(([v, l]) =>
+    `<button type="button" data-action="profile" data-field="${field}" data-value="${v}" aria-pressed="${String(p[field]) === String(v)}">${l}</button>`).join("")}</div>`;
+  return `<div class="page-head"><h1>Mon profil sportif</h1></div>
+    <div class="two-cols">
+      <div>
+        <div class="panel">
+          <h2>Vous</h2>
+          <div class="field" style="margin-bottom:14px">Sexe ${seg("sexe", [["homme", "Homme"], ["femme", "Femme"]])}</div>
+          <div class="form-grid">
+            <label class="field">Âge<input id="profil-age" type="number" inputmode="numeric" min="14" max="99" data-action="profile-input" data-field="age" value="${esc(p.age)}" placeholder="30"></label>
+            <label class="field">Poids (kg)<input id="profil-poids" type="number" inputmode="decimal" min="35" max="250" step="0.5" data-action="profile-input" data-field="poids" value="${esc(p.poids)}" placeholder="75"></label>
+            <label class="field">Taille (cm)<input id="profil-taille" type="number" inputmode="numeric" min="130" max="230" data-action="profile-input" data-field="taille" value="${esc(p.taille)}" placeholder="178"></label>
+            <div class="field">Repas par jour ${seg("repas", [[2, "2"], [3, "3"], [4, "4"], [5, "5"]])}</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Activité</h2>
+          <div class="choices">${Object.entries(C.ACTIVITY).map(([k, a]) =>
+            `<button type="button" class="choice" data-action="profile" data-field="activite" data-value="${k}" aria-pressed="${p.activite === k}"><b>${a.label}</b><span>${a.hint}</span></button>`).join("")}</div>
+        </div>
+        <div class="panel">
+          <h2>Objectif</h2>
+          <div class="choices cols-3">${Object.entries(C.GOALS).map(([k, g]) =>
+            `<button type="button" class="choice" data-action="profile" data-field="objectif" data-value="${k}" aria-pressed="${p.objectif === k}"><span class="emoji" aria-hidden="true">${{ seche: "🔥", maintien: "⚖️", masse: "🏋️" }[k]}</span><b>${g.label}</b><span>${g.hint}</span></button>`).join("")}</div>
+        </div>
+      </div>
+      <aside class="panel sticky">
+        <h2>Vos besoins par jour</h2>
+        ${daily ? `
+          <div class="targets">
+            <div class="kpi"><b>${num(daily.kcal)}</b><span>kcal</span></div>
+            <div class="kpi"><b>${num(daily.proteines)} g</b><span>protéines</span></div>
+            <div class="kpi"><b>${num(daily.glucides)} g</b><span>glucides</span></div>
+            <div class="kpi"><b>${num(daily.lipides)} g</b><span>lipides</span></div>
+          </div>
+          <h3 style="font-size:1rem;margin:16px 0 4px">Par repas (${p.repas || 3} par jour)</h3>
+          <div class="total-line"><span>Énergie</span><span>${num(meal.kcal)} kcal</span></div>
+          <div class="total-line"><span>Protéines</span><span>${num(meal.proteines)} g</span></div>
+          <p class="hint">Métabolisme de base ${num(daily.bmr)} kcal (formule de Mifflin-St Jeor), dépense estimée ${num(daily.tdee)} kcal.
+            Protéines : ${num(C.GOALS[p.objectif].proteines, 1)} g par kg ; lipides : au moins 25 % des calories. Ce sont des repères, pas un avis médical.</p>
+          <a class="btn primary block" href="#/" style="margin-top:12px">Voir les recettes adaptées →</a>`
+        : `<p class="muted">Renseignez votre âge, votre poids et votre taille pour calculer vos besoins.</p>`}
+      </aside>
+    </div>`;
+}
+
+function viewCreate(id) {
+  const editing = id ? state.custom.find((r) => r.id === id) : null;
+  const draft = ui.draft || (ui.draft = editing
+    ? { id: editing.id, nom: editing.nom, portions: editing.portions, texte: editing.ingredients.join("\n") }
+    : { id: null, nom: "", portions: 2, texte: "" });
+  return `<a class="back" href="#/">← Recettes</a>
+    <div class="page-head"><h1>${editing ? "Modifier ma recette" : "Créer ma recette"}</h1></div>
+    <div class="two-cols free">
+      <div class="panel">
+        <label class="field" style="margin-bottom:12px">Nom<input type="text" data-action="draft" data-field="nom" value="${esc(draft.nom)}" placeholder="Mon bowl du dimanche"></label>
+        <label class="field" style="margin-bottom:12px">Couverts<input type="number" min="1" max="20" data-action="draft" data-field="portions" value="${esc(draft.portions)}"></label>
+        <label class="field">Ingrédients — un par ligne
+          <textarea data-action="draft" data-field="texte" spellcheck="false" placeholder="300 g filet de poulet&#10;150 g riz basmati&#10;200 g brocolis&#10;2 oeufs @60g">${esc(draft.texte)}</textarea></label>
+        <details class="syntax"><summary>Format des lignes</summary>
+          <p><code>200 g blanc de poulet</code> — unités : g, kg, ml, cl, l.<br><code>2 oeufs @60g</code> — pièces, avec le poids d'une pièce.<br>
+          Comptez le riz et les pâtes en poids sec.</p></details>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn primary" data-action="save-draft">${editing ? "Enregistrer" : "Ajouter à mes recettes"}</button>
+          <button class="btn" data-action="share-draft">Copier le lien</button>
+          ${editing ? `<button class="btn ghost" data-action="delete-custom" data-id="${esc(editing.id)}">Supprimer</button>` : ""}
+        </div>
+      </div>
+      <div id="draft-preview">${draftPreview(draft)}</div>
+    </div>`;
+}
+
+function draftPreview(draft) {
+  const r = { id: draft.id || "brouillon", portions: Math.max(1, +draft.portions || 1), ingredients: C.parseLines(draft.texte) };
+  if (!r.ingredients.length) return `<div class="panel"><p class="muted">Tapez vos ingrédients : le coût et les macros s'affichent ici.</p></div>`;
+  const res = compute(r, { p: r.portions, t: 1 });
+  const { meal } = targets();
+  return `<div class="panel">
+    <div class="kpis">
+      <div class="kpi"><b>${num(res.perPortion.macros[0])}</b><span>kcal / portion</span></div>
+      <div class="kpi"><b>${num(res.perPortion.macros[1])} g</b><span>protéines</span></div>
+      <div class="kpi"><b>${euro(res.perPortion.cost)}</b><span>par personne</span></div>
+    </div>
+    ${macroBars(res.perPortion.macros, meal)}
+  </div>
+  <div class="panel"><h2>Produits du Drive</h2>${ingredientsHtml(res.lines)}</div>`;
+}
+
+function viewProducts() {
+  const q = ui.productQuery || "";
+  const sort = ui.productSort || "pertinence";
+  const hits = C.queryTokens(q).length ? C.search(cat, q, { sort }) : [];
+  return `<a class="back" href="#/">← Recettes</a>
+    <div class="page-head"><h1>Produits du Drive</h1></div>
+    <div class="toolbar">
+      <input id="product-search" class="search" type="search" data-action="product-query" placeholder="Skyr, thon, flocons d'avoine…" value="${esc(q)}" autocomplete="off" aria-label="Rechercher un produit">
+      <div class="chips" role="group" aria-label="Trier">${[["pertinence", "Pertinence"], ["prix-kg", "Prix au kilo"], ["proteines-euro", "Protéines par euro"], ["proteines", "Protéines / 100 g"]]
+        .map(([v, l]) => `<button class="chip" data-action="product-sort" data-sort="${v}" aria-pressed="${sort === v}">${l}</button>`).join("")}</div>
+    </div>
+    <p class="muted">${q ? `${hits.length.toLocaleString("fr-FR")} produits${hits.length > 60 ? " — 60 premiers affichés" : ""}` : `${cat.products.length.toLocaleString("fr-FR")} produits relevés au ${esc(cat.magasin.nom)}.`}</p>
+    <div class="products">${hits.slice(0, 60).map((p) => {
+      const m = p.macros;
+      const ppe = C.proteinPerEuro(p);
+      return `<article class="product">
+        ${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" width="56" height="56">` : "<span></span>"}
+        <div><h3>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.nom)}</a>` : esc(p.nom)}</h3>
+          <div><strong>${euro(p.prix)}</strong> <span class="muted">${esc(unitLabel(p))}</span></div>
+          <div class="muted" style="font-size:.8rem">${esc(p.conditionnement)}${p.promo ? ` · <span style="color:var(--brand);font-weight:800">${esc(p.promo)}</span>` : ""}</div></div>
+        <div class="nutri">${m ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span>${ppe > 0 ? `<span>${num(ppe)} g prot./€</span>` : ""}` : "<span>macros non renseignées</span>"}<span>/ 100 g</span></div>
+      </article>`;
+    }).join("")}</div>`;
+}
+
+function notFound() {
+  return `<div class="empty"><div class="big-emoji">🤔</div><p>Cette page n'existe pas (ou plus).</p><a class="btn primary" href="#/">Retour aux recettes</a></div>`;
+}
+
+// ---------- Navigation ----------
+
+const ROUTES = [
+  [/^#?\/?$/, () => viewRecipes(), "recettes"],
+  [/^#\/recette\/(.+)$/, (m) => viewRecipe(decodeURIComponent(m[1])), "recettes"],
+  [/^#\/cuisine\/(.+)$/, (m) => viewCook(decodeURIComponent(m[1])), "recettes"],
+  [/^#\/menu$/, () => viewMenu(), "menu"],
+  [/^#\/courses$/, () => viewCourses(), "courses"],
+  [/^#\/profil$/, () => viewProfil(), "profil"],
+  [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "recettes"],
+  [/^#\/produits$/, () => viewProducts(), "recettes"],
+];
+
+let lastHash = null;
+function render({ keepScroll = false } = {}) {
+  const hash = location.hash || "#/";
+  // anciens liens partagés : #r=<recette du mode libre>
+  const legacy = hash.match(/^#r=(.+)$/);
+  if (legacy) {
+    try {
+      const r = C.decode(legacy[1]);
+      ui.draft = { id: null, nom: r.nom || "", portions: r.portions || 2, texte: r.texte || "" };
+    } catch { /* lien abîmé */ }
+    location.replace("#/creer");
     return;
   }
-  // recalcul avec les prix du dernier relevé
-  const pinsBackup = state.pins;
-  box.innerHTML = saved.map((r, i) => {
-    state.pins = r.choix || {};
-    const results = computeRecipe(r.texte);
-    const cost = results.reduce((a, x) => a + (x.cost || 0), 0);
-    const kcal = results.reduce((a, x) => a + (x.macros ? x.macros[0] : 0), 0);
-    const prot = results.reduce((a, x) => a + (x.macros ? x.macros[1] : 0), 0);
-    const n = r.portions || 1;
-    return `<article class="saved-card">
-      <h3>${esc(r.nom)}</h3>
-      <div class="figures">${n} portion${n > 1 ? "s" : ""} · ${euro(cost / n)} / portion<br>
-        ${num(kcal / n)} kcal · ${num(prot / n)} g de protéines / portion</div>
-      <div class="row">
-        <button class="btn small primary" data-open="${i}">Ouvrir</button>
-        <button class="btn small ghost" data-delete="${i}">Supprimer</button>
-      </div>
-    </article>`;
-  }).join("");
-  state.pins = pinsBackup;
-}
-
-// ---------- Envoi au panier Carrefour ----------
-// Le panier ne peut être rempli que depuis carrefour.fr : on y ouvre la recette (#recette-macros=…),
-// et site/carrefour-panier.js, installé comme userscript ou favori, fait l'ajout.
-
-// Un même produit sur plusieurs lignes : on additionne les quantités avant de compter les paquets
-// (200 g + 100 g de skyr tiennent dans un seul pot de 800 g).
-function cartItems(results) {
-  const byEan = new Map();
-  for (const r of results) {
-    if (!r.product || !r.packs) continue;
-    const entry = byEan.get(r.product.ean) || { p: r.product, used: 0 };
-    entry.used += r.used;
-    byEan.set(r.product.ean, entry);
+  const route = ROUTES.find(([re]) => re.test(hash));
+  const view = $("#view");
+  const active = document.activeElement;
+  const focusId = active && view.contains(active) ? active.id : null;
+  const caret = focusId ? active.selectionStart : null;
+  view.innerHTML = route ? route[1](hash.match(route[0])) : notFound();
+  document.querySelectorAll(".nav a").forEach((a) => {
+    if (route && a.dataset.route === route[2]) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  });
+  if (hash !== lastHash) {
+    if (!keepScroll) window.scrollTo(0, 0);
+    if (!/^#\/cuisine/.test(hash)) ui.cookStep = 0;
+    lastHash = hash;
+  } else if (focusId) {
+    // re-rendu pendant une saisie : on garde le champ actif et la position du curseur
+    const el = document.getElementById(focusId);
+    if (el) {
+      el.focus();
+      if (caret != null) try { el.setSelectionRange(caret, caret); } catch { /* champ numérique */ }
+    }
   }
-  return [...byEan.values()].map(({ p, used }) => [p.ean, packsFor(p, used), p.nom]);
 }
 
-function cartUrl() {
-  const order = {
-    v: 1,
-    nom: $("recipe-name").value.trim() || "Recette",
-    magasin: state.magasin.ref,
-    nomMagasin: state.magasin.nom,
-    articles: cartItems(state.lastResults),
-  };
-  // set-store choisit d'abord le bon Drive ; l'ancre est conservée après la redirection
-  return `https://www.carrefour.fr/set-store/${encodeURIComponent(state.magasin.ref)}#recette-macros=${encodeRecipe(order)}`;
+function updateCounts() {
+  $("#menu-count").textContent = Object.keys(state.menu).length || "";
+}
+
+// ---------- Actions ----------
+
+function toggleMenu(id) {
+  const r = recipeById(id);
+  if (!r) return;
+  if (state.menu[id]) {
+    delete state.menu[id];
+    toast(`Retiré du menu : ${r.nom}`);
+  } else {
+    state.menu[id] = { ...(ui.view[id] || { p: r.portions, t: 1 }) };
+    toast(`Ajouté au menu : ${r.nom}`);
+  }
+  save();
+  render({ keepScroll: true });
+}
+
+function setServing(id, change) {
+  const r = recipeById(id);
+  const s = { ...servingOf(r), ...change(servingOf(r)) };
+  if (state.menu[id]) state.menu[id] = s; else ui.view[id] = s;
+  save();
+  render({ keepScroll: true });
 }
 
 function setupDone() {
@@ -403,100 +594,162 @@ function setupDone() {
 async function prepareBookmarklet() {
   try {
     const code = await (await fetch("carrefour-panier.js", { cache: "no-cache" })).text();
-    $("bookmarklet").href = "javascript:" + encodeURIComponent(`window.__recetteMacrosBookmarklet=1;${code}`);
+    $("#bookmarklet").href = "javascript:" + encodeURIComponent(`window.__recetteMacrosBookmarklet=1;${code}`);
   } catch { /* le favori reste inactif, l'option 1 fonctionne toujours */ }
 }
 
-function sendToCart() {
+function sendToCart(nom, list) {
+  if (!list.some((e) => !e.owned && e.packs)) return toast("Rien à ajouter au panier.");
+  const url = C.cartUrl(cat, nom, list);
   if (setupDone()) {
-    window.open(cartUrl(), "_blank", "noopener");
+    window.open(url, "_blank", "noopener");
     return;
   }
-  const dialog = $("cart-dialog");
+  const dialog = $("#cart-dialog");
   prepareBookmarklet();
   dialog.addEventListener("close", function onClose() {
     dialog.removeEventListener("close", onClose);
     if (dialog.returnValue !== "send") return;
-    if ($("cart-dialog-skip").checked) {
+    if ($("#cart-dialog-skip").checked) {
       try { localStorage.setItem(CART_SETUP_KEY, "1"); } catch { /* sans effet */ }
     }
-    window.open(cartUrl(), "_blank", "noopener");
+    window.open(url, "_blank", "noopener");
   });
   dialog.showModal();
 }
 
-// ---------- Interface ----------
-
-function showTab(name) {
-  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === name)));
-  document.querySelectorAll(".panel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
-  if (name === "mes-recettes") renderSaved();
-  if (name === "produits") $("product-query").focus();
+function updateProfile(field, value) {
+  state.profile = { sexe: "homme", age: "", poids: "", taille: "", activite: "modere", objectif: "maintien", repas: 3, ...state.profile };
+  state.profile[field] = ["age", "poids", "taille", "repas"].includes(field) ? (value === "" ? "" : +value) : value;
+  save();
 }
 
-function debounce(fn, ms) {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+function saveDraft() {
+  const d = ui.draft;
+  const lines = C.parseLines(d.texte);
+  if (!lines.length) return toast("Ajoutez au moins un ingrédient.");
+  let r = d.id && state.custom.find((x) => x.id === d.id);
+  if (r) {
+    Object.assign(r, { nom: d.nom || "Ma recette", portions: Math.max(1, +d.portions || 1), ingredients: lines });
+  } else {
+    r = customFromText(d.nom, d.portions, d.texte);
+    state.custom.unshift(r);
+  }
+  statsCache.clear();
+  save();
+  ui.draft = null;
+  location.hash = `#/recette/${encodeURIComponent(r.id)}`;
+  toast("Recette enregistrée.");
 }
 
-function bind() {
-  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.tab)));
-  const rerender = debounce(renderRecipe, 200);
-  $("recipe-text").addEventListener("input", rerender);
-  $("recipe-portions").addEventListener("input", rerender);
-  document.querySelectorAll('input[name="strategy"]').forEach((el) =>
-    el.addEventListener("change", () => { state.strategy = el.value; renderRecipe(); }));
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el || ["SELECT", "INPUT", "TEXTAREA"].includes(el.tagName)) return;
+  const { action, id } = el.dataset;
+  switch (action) {
+    case "toggle-menu": e.preventDefault(); toggleMenu(id); break;
+    case "servings": setServing(id, (s) => ({ p: Math.min(20, Math.max(1, s.p + +el.dataset.delta)) })); break;
+    case "adapt": {
+      const t = +el.dataset.size;
+      setServing(id, () => ({ t }));
+      toast(t === 1 ? "Portion standard" : `Portions ×${num(t, 2)} pour votre objectif`);
+      break;
+    }
+    case "tag": ui.tag = el.dataset.tag || null; render({ keepScroll: true }); break;
+    case "cook-step": ui.cookStep = Math.max(0, ui.cookStep + +el.dataset.delta); render(); break;
+    case "profile": updateProfile(el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
+    case "send-recipe": {
+      const r = recipeById(id);
+      sendToCart(r.nom, C.shoppingList(compute(r).lines, { exclude: new Set(state.owned) }));
+      break;
+    }
+    case "send-menu": {
+      const { entries, list } = menuShopping();
+      sendToCart(entries.length === 1 ? entries[0].r.nom : `Menu de ${entries.length} recettes`, list);
+      break;
+    }
+    case "save-draft": saveDraft(); break;
+    case "share-draft": {
+      const url = `${location.origin}${location.pathname}#r=${C.encode(ui.draft)}`;
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast("Lien copié."), () => toast("Copie impossible."));
+      break;
+    }
+    case "delete-custom":
+      state.custom = state.custom.filter((r) => r.id !== id);
+      delete state.menu[id];
+      save();
+      ui.draft = null;
+      location.hash = "#/";
+      toast("Recette supprimée.");
+      break;
+    case "product-sort": ui.productSort = el.dataset.sort; render({ keepScroll: true }); break;
+  }
+});
 
-  $("save-recipe").addEventListener("click", () => {
-    const r = currentRecipe();
-    if (!r.texte.trim()) return toast("Ajoutez d'abord des ingrédients.");
-    const saved = readSaved().filter((s) => s.nom !== r.nom);
-    saved.unshift(r);
-    toast(writeSaved(saved) ? `« ${r.nom} » enregistrée.` : "Impossible d'enregistrer dans ce navigateur.");
-    $("saved-count").textContent = saved.length;
-  });
-  $("share-recipe").addEventListener("click", async () => {
-    const url = `${location.origin}${location.pathname}#r=${encodeRecipe(currentRecipe())}`;
-    history.replaceState(null, "", url);
-    try { await navigator.clipboard.writeText(url); toast("Lien copié."); } catch { toast("Lien prêt dans la barre d'adresse."); }
-  });
-  $("send-cart").addEventListener("click", sendToCart);
-  $("bookmarklet").addEventListener("click", (e) => {
-    e.preventDefault();
-    toast("Glissez ce bouton dans la barre de favoris, ne cliquez pas dessus ici.");
-  });
-  $("clear-recipe").addEventListener("click", () => loadRecipe({ nom: "", portions: 2, texte: "", choix: {} }));
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (el.dataset.action === "pin") {
+    state.pins[el.dataset.key] = el.value;
+    statsCache.clear();
+    save();
+    if (ui.draft) $("#draft-preview").innerHTML = draftPreview(ui.draft);
+    else render({ keepScroll: true });
+  } else if (el.dataset.action === "owned") {
+    const set = new Set(state.owned);
+    if (el.checked) set.add(el.dataset.ean); else set.delete(el.dataset.ean);
+    state.owned = [...set];
+    save();
+    render({ keepScroll: true });
+  }
+});
 
-  $("saved").addEventListener("click", (e) => {
-    const open = e.target.closest("[data-open]");
-    const del = e.target.closest("[data-delete]");
-    const saved = readSaved();
-    if (open) { loadRecipe(saved[+open.dataset.open]); showTab("recette"); }
-    if (del) { saved.splice(+del.dataset.delete, 1); writeSaved(saved); renderSaved(); }
-  });
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const rerenderSoon = debounce(() => render({ keepScroll: true }), 220);
+const previewSoon = debounce(() => { const el = $("#draft-preview"); if (el && ui.draft) el.innerHTML = draftPreview(ui.draft); }, 250);
 
-  const rerenderProducts = debounce(renderProducts, 150);
-  $("product-query").addEventListener("input", rerenderProducts);
-  $("product-sort").addEventListener("change", renderProducts);
-}
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (el.id === "recipe-search") { ui.query = el.value; rerenderSoon(); }
+  else if (el.dataset.action === "product-query") { ui.productQuery = el.value; rerenderSoon(); }
+  else if (el.dataset.action === "profile-input") { updateProfile(el.dataset.field, el.value); rerenderSoon(); }
+  else if (el.dataset.action === "draft") { ui.draft[el.dataset.field] = el.value; previewSoon(); }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (!/^#\/cuisine/.test(location.hash)) return;
+  if (e.key === "ArrowRight") { ui.cookStep++; render(); }
+  if (e.key === "ArrowLeft") { ui.cookStep = Math.max(0, ui.cookStep - 1); render(); }
+});
+
+$("#bookmarklet").addEventListener("click", (e) => {
+  e.preventDefault();
+  toast("Glissez ce bouton dans la barre de favoris.");
+});
+
+window.addEventListener("hashchange", () => {
+  if (!/^#\/creer/.test(location.hash)) ui.draft = null;
+  render();
+});
 
 async function init() {
-  bind();
-  $("saved-count").textContent = readSaved().length || "";
+  updateCounts();
   try {
-    await loadCatalogue();
+    const [catalogue, recettes] = await Promise.all([
+      fetch("data/catalogue.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(`catalogue (${r.status})`); return r.json(); }),
+      fetch("recettes.json", { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(`recettes (${r.status})`); return r.json(); }),
+    ]);
+    cat = C.loadCatalogue(catalogue);
+    book = { tags: recettes.tags, recettes: recettes.recettes, byId: new Map(recettes.recettes.map((r) => [r.id, r])) };
   } catch (e) {
-    $("store-info").textContent = `Impossible de charger le catalogue : ${e.message}`;
+    $("#view").innerHTML = `<div class="empty"><div class="big-emoji">😕</div><p>Impossible de charger le site : ${esc(e.message)}</p></div>`;
     return;
   }
-  const shared = location.hash.match(/^#r=(.+)$/);
-  if (shared) {
-    try { loadRecipe(decodeRecipe(shared[1])); return; } catch { /* lien abîmé : recette d'exemple */ }
-  }
-  if (!$("recipe-text").value) {
-    loadRecipe({ nom: "Bowl poulet riz brocolis", portions: 2, choix: {},
-      texte: "300 g filet de poulet\n150 g riz basmati\n200 g brocolis\n10 ml huile d'olive" });
-  }
+  // une recette retirée du catalogue ne doit pas rester dans le menu
+  for (const id of Object.keys(state.menu)) if (!recipeById(id)) delete state.menu[id];
+  save();
+  $("#footer").innerHTML = `Prix relevés chaque semaine au ${esc(cat.magasin.nom)} (relevé du ${new Date(cat.maj).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}, ${cat.products.length.toLocaleString("fr-FR")} produits).
+    Macros : Open Food Facts ou valeurs moyennes Ciqual (*). <a href="#/produits">Chercher un produit</a>.`;
+  render();
 }
 
 init();

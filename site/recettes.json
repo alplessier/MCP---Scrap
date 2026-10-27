@@ -1,0 +1,263 @@
+{
+  "tags": {
+    "proteine": "Protéiné",
+    "post-training": "Après la séance",
+    "masse": "Prise de masse",
+    "seche": "Sèche",
+    "petit-dej": "Petit-déj",
+    "collation": "Collation",
+    "vegetarien": "Végétarien",
+    "rapide": "Moins de 20 min",
+    "budget": "Petit budget"
+  },
+  "recettes": [
+    {
+      "id": "bowl-poulet-riz-brocolis",
+      "nom": "Bowl poulet, riz & brocolis",
+      "emoji": "🥦", "couleur": "#dff1d8", "temps": 25, "portions": 2,
+      "tags": ["proteine", "post-training", "masse"],
+      "ingredients": ["300 g filet de poulet", "150 g riz basmati", "400 g brocolis", "10 ml huile d'olive", "20 ml sauce soja"],
+      "etapes": [
+        "Faites cuire le riz dans un grand volume d'eau salée, 10 à 12 minutes, puis égouttez.",
+        "Pendant ce temps, faites cuire les brocolis 6 minutes à la vapeur ou dans l'eau bouillante.",
+        "Coupez le poulet en dés et saisissez-le 6 à 8 minutes dans l'huile d'olive bien chaude.",
+        "Ajoutez la sauce soja en fin de cuisson, mélangez et servez sur le riz avec les brocolis."
+      ]
+    },
+    {
+      "id": "omelette-epinards-feta",
+      "nom": "Omelette épinards & feta",
+      "emoji": "🍳", "couleur": "#fff1c7", "temps": 15, "portions": 2,
+      "tags": ["petit-dej", "seche", "rapide", "vegetarien", "proteine"],
+      "ingredients": ["6 oeufs @60g", "150 g épinards", "60 g feta", "5 ml huile d'olive"],
+      "etapes": [
+        "Faites tomber les épinards 2 minutes dans une poêle huilée.",
+        "Battez les œufs avec un peu de sel et de poivre.",
+        "Versez les œufs sur les épinards, émiettez la feta et laissez prendre 4 à 5 minutes à feu doux.",
+        "Pliez l'omelette en deux et servez aussitôt."
+      ]
+    },
+    {
+      "id": "overnight-oats-skyr",
+      "nom": "Overnight oats skyr & fruits rouges",
+      "emoji": "🫐", "couleur": "#e7e2fb", "temps": 5, "portions": 2,
+      "tags": ["petit-dej", "proteine", "vegetarien", "rapide"],
+      "ingredients": ["100 g flocons d'avoine", "300 g skyr", "200 ml lait demi-écrémé", "150 g fruits rouges", "20 g miel"],
+      "etapes": [
+        "Mélangez les flocons d'avoine, le skyr, le lait et le miel dans deux bocaux.",
+        "Ajoutez les fruits rouges par-dessus.",
+        "Fermez et laissez reposer une nuit au réfrigérateur. C'est prêt au réveil."
+      ]
+    },
+    {
+      "id": "saumon-patate-douce",
+      "nom": "Saumon, patate douce & haricots verts",
+      "emoji": "🐟", "couleur": "#ffe1d6", "temps": 30, "portions": 2,
+      "tags": ["proteine", "seche"],
+      "ingredients": ["260 g pavé de saumon", "500 g patate douce", "300 g haricots verts", "10 ml huile d'olive", "1 citron @100g"],
+      "etapes": [
+        "Préchauffez le four à 200 °C. Coupez les patates douces en cubes, arrosez d'huile et enfournez 25 minutes.",
+        "Faites cuire les haricots verts 8 minutes dans l'eau bouillante salée.",
+        "Ajoutez le saumon sur la plaque pour les 12 dernières minutes de cuisson.",
+        "Servez avec un filet de jus de citron."
+      ]
+    },
+    {
+      "id": "chili-con-carne",
+      "nom": "Chili con carne maigre",
+      "emoji": "🌶️", "couleur": "#ffd9cf", "temps": 35, "portions": 4,
+      "tags": ["masse", "budget", "proteine"],
+      "ingredients": ["500 g boeuf haché 5%", "400 g haricots rouges", "800 g pulpe de tomates", "1 oignon @100g", "200 g riz long", "5 g cumin"],
+      "etapes": [
+        "Émincez l'oignon et faites-le revenir 3 minutes. Ajoutez la viande et faites-la dorer.",
+        "Ajoutez le cumin, les tomates et les haricots rouges égouttés. Laissez mijoter 20 minutes.",
+        "Pendant ce temps, faites cuire le riz.",
+        "Servez le chili sur le riz."
+      ]
+    },
+    {
+      "id": "spaghetti-bolognaise",
+      "nom": "Spaghetti bolognaise protéinée",
+      "emoji": "🍝", "couleur": "#ffe7c2", "temps": 30, "portions": 2,
+      "tags": ["masse", "proteine", "budget"],
+      "ingredients": ["200 g pâtes spaghetti", "300 g boeuf haché 5%", "400 g sauce tomate", "1 oignon @100g", "30 g parmesan"],
+      "etapes": [
+        "Faites revenir l'oignon émincé, puis la viande hachée jusqu'à ce qu'elle soit bien dorée.",
+        "Ajoutez la sauce tomate et laissez mijoter 15 minutes.",
+        "Faites cuire les spaghetti al dente.",
+        "Servez la sauce sur les pâtes, avec le parmesan râpé."
+      ]
+    },
+    {
+      "id": "wrap-dinde-avocat",
+      "nom": "Wraps dinde & avocat",
+      "emoji": "🌯", "couleur": "#e3f4dc", "temps": 10, "portions": 2,
+      "tags": ["rapide", "proteine", "collation"],
+      "ingredients": ["4 wraps de blé @60g", "200 g blanc de dinde", "1 avocat @150g", "100 g tomates cerises", "50 g salade"],
+      "etapes": [
+        "Écrasez l'avocat avec une pincée de sel.",
+        "Tartinez les wraps, ajoutez la dinde, la salade et les tomates coupées.",
+        "Roulez bien serré et coupez en deux."
+      ]
+    },
+    {
+      "id": "salade-lentilles-thon",
+      "nom": "Salade de lentilles, thon & œufs",
+      "emoji": "🥗", "couleur": "#e6f0d2", "temps": 25, "portions": 2,
+      "tags": ["seche", "budget", "proteine"],
+      "ingredients": ["150 g lentilles vertes", "280 g thon naturel", "4 oeufs @60g", "200 g tomates cerises", "15 ml huile d'olive"],
+      "etapes": [
+        "Faites cuire les lentilles 20 minutes dans l'eau non salée, puis égouttez et laissez tiédir.",
+        "Faites cuire les œufs 9 minutes, puis écalez-les.",
+        "Mélangez les lentilles, le thon émietté, les tomates coupées et l'huile. Salez, poivrez.",
+        "Ajoutez les œufs coupés en quartiers."
+      ]
+    },
+    {
+      "id": "curry-pois-chiches",
+      "nom": "Curry de pois chiches & épinards",
+      "emoji": "🍛", "couleur": "#fff0bf", "temps": 25, "portions": 2,
+      "tags": ["vegetarien", "budget"],
+      "ingredients": ["400 g pois chiches", "200 ml lait de coco", "200 g épinards", "1 oignon @100g", "150 g riz basmati", "5 g curry"],
+      "etapes": [
+        "Faites revenir l'oignon émincé avec le curry 2 minutes.",
+        "Ajoutez les pois chiches égouttés et le lait de coco. Laissez mijoter 10 minutes.",
+        "Ajoutez les épinards et laissez-les tomber 2 minutes.",
+        "Servez avec le riz basmati."
+      ]
+    },
+    {
+      "id": "poulet-tikka",
+      "nom": "Poulet tikka au yaourt grec",
+      "emoji": "🍗", "couleur": "#ffdcc8", "temps": 30, "portions": 2,
+      "tags": ["proteine", "post-training"],
+      "ingredients": ["400 g filet de poulet", "150 g yaourt à la grecque nature", "5 g curry", "150 g riz basmati", "1 citron @100g"],
+      "etapes": [
+        "Mélangez le yaourt, le curry et le jus du citron. Ajoutez le poulet en dés et laissez mariner 10 minutes.",
+        "Faites cuire le riz.",
+        "Saisissez le poulet et sa marinade 8 à 10 minutes à feu vif.",
+        "Servez sur le riz."
+      ]
+    },
+    {
+      "id": "pancakes-banane",
+      "nom": "Pancakes protéinés à la banane",
+      "emoji": "🥞", "couleur": "#ffecc9", "temps": 20, "portions": 2,
+      "tags": ["petit-dej", "post-training", "vegetarien"],
+      "ingredients": ["80 g flocons d'avoine", "2 bananes @120g", "4 oeufs @60g", "150 g fromage blanc 0%", "20 g miel"],
+      "etapes": [
+        "Mixez les flocons d'avoine, une banane, les œufs et le fromage blanc.",
+        "Faites cuire de petites louches de pâte 2 minutes de chaque côté dans une poêle chaude.",
+        "Servez avec la seconde banane en rondelles et le miel."
+      ]
+    },
+    {
+      "id": "tofu-teriyaki",
+      "nom": "Bowl tofu teriyaki",
+      "emoji": "🥢", "couleur": "#f3e3d3", "temps": 25, "portions": 2,
+      "tags": ["vegetarien", "seche"],
+      "ingredients": ["400 g tofu nature", "150 g riz basmati", "300 g brocolis", "200 g carottes", "30 ml sauce soja", "20 g miel"],
+      "etapes": [
+        "Faites cuire le riz, et les brocolis 6 minutes à la vapeur.",
+        "Coupez le tofu en cubes et faites-le dorer 8 minutes à la poêle.",
+        "Ajoutez la sauce soja et le miel, laissez caraméliser 2 minutes.",
+        "Servez avec le riz, les brocolis et les carottes râpées."
+      ]
+    },
+    {
+      "id": "cabillaud-quinoa",
+      "nom": "Cabillaud, quinoa & courgettes",
+      "emoji": "🐠", "couleur": "#dcecf7", "temps": 25, "portions": 2,
+      "tags": ["seche", "proteine"],
+      "ingredients": ["300 g filet de cabillaud", "120 g quinoa", "2 courgettes @200g", "10 ml huile d'olive", "1 citron @100g"],
+      "etapes": [
+        "Faites cuire le quinoa 12 minutes dans l'eau bouillante salée.",
+        "Coupez les courgettes en rondelles et faites-les sauter 8 minutes dans l'huile.",
+        "Faites cuire le cabillaud 4 minutes de chaque côté à la poêle.",
+        "Servez avec un filet de citron."
+      ]
+    },
+    {
+      "id": "smoothie-recup",
+      "nom": "Smoothie récup' banane & cacahuète",
+      "emoji": "🥤", "couleur": "#f6e6cf", "temps": 5, "portions": 2,
+      "tags": ["post-training", "collation", "masse", "rapide", "vegetarien"],
+      "ingredients": ["2 bananes @120g", "400 ml lait demi-écrémé", "50 g flocons d'avoine", "30 g beurre de cacahuète", "200 g skyr"],
+      "etapes": [
+        "Mettez tous les ingrédients dans un blender.",
+        "Mixez 1 minute jusqu'à obtenir une texture lisse. À boire dans l'heure qui suit la séance."
+      ]
+    },
+    {
+      "id": "tartines-saumon-fume",
+      "nom": "Tartines saumon fumé & fromage frais",
+      "emoji": "🥯", "couleur": "#ffe4dc", "temps": 10, "portions": 2,
+      "tags": ["petit-dej", "proteine", "rapide"],
+      "ingredients": ["160 g pain de mie complet", "150 g saumon fumé", "100 g fromage frais nature", "1 citron @100g"],
+      "etapes": [
+        "Faites griller les tranches de pain.",
+        "Tartinez de fromage frais, ajoutez le saumon fumé et un trait de citron."
+      ]
+    },
+    {
+      "id": "riz-saute-crevettes",
+      "nom": "Riz sauté aux crevettes & œufs",
+      "emoji": "🍤", "couleur": "#ffe5d0", "temps": 20, "portions": 2,
+      "tags": ["rapide", "proteine"],
+      "ingredients": ["150 g riz basmati", "250 g crevettes décortiquées", "3 oeufs @60g", "200 g petits pois très fins", "20 ml sauce soja"],
+      "etapes": [
+        "Faites cuire le riz, idéalement la veille, et laissez-le refroidir.",
+        "Brouillez les œufs dans un wok chaud, puis réservez.",
+        "Faites sauter le riz, les petits pois et les crevettes 5 minutes.",
+        "Ajoutez les œufs et la sauce soja, mélangez et servez."
+      ]
+    },
+    {
+      "id": "dahl-lentilles-corail",
+      "nom": "Dahl de lentilles corail",
+      "emoji": "🧡", "couleur": "#ffe0c4", "temps": 30, "portions": 3,
+      "tags": ["vegetarien", "budget"],
+      "ingredients": ["200 g lentilles corail", "200 ml lait de coco", "400 g pulpe de tomates", "1 oignon @100g", "5 g curry", "150 g riz basmati"],
+      "etapes": [
+        "Faites revenir l'oignon émincé avec le curry.",
+        "Ajoutez les lentilles, les tomates, le lait de coco et 30 cl d'eau. Laissez mijoter 20 minutes en remuant.",
+        "Servez avec le riz basmati."
+      ]
+    },
+    {
+      "id": "pates-poulet-pesto",
+      "nom": "Pâtes au poulet & pesto",
+      "emoji": "🌿", "couleur": "#e1f2d9", "temps": 20, "portions": 2,
+      "tags": ["masse", "proteine", "rapide"],
+      "ingredients": ["200 g penne", "300 g filet de poulet", "60 g pesto basilic", "200 g tomates cerises"],
+      "etapes": [
+        "Faites cuire les penne al dente.",
+        "Saisissez le poulet en lanières 6 à 8 minutes.",
+        "Mélangez les pâtes, le poulet, le pesto et les tomates cerises coupées en deux."
+      ]
+    },
+    {
+      "id": "fromage-blanc-granola",
+      "nom": "Bol fromage blanc, muesli & fruits",
+      "emoji": "🍓", "couleur": "#ffe1e6", "temps": 5, "portions": 2,
+      "tags": ["collation", "petit-dej", "vegetarien", "rapide", "proteine"],
+      "ingredients": ["400 g fromage blanc 0%", "60 g muesli", "150 g fruits rouges", "20 g miel"],
+      "etapes": [
+        "Répartissez le fromage blanc dans deux bols.",
+        "Ajoutez le muesli, les fruits rouges et le miel."
+      ]
+    },
+    {
+      "id": "burger-maison",
+      "nom": "Burger maison au bœuf maigre",
+      "emoji": "🍔", "couleur": "#ffe3c9", "temps": 20, "portions": 2,
+      "tags": ["masse"],
+      "ingredients": ["2 pains burger @60g", "250 g boeuf haché 5%", "40 g cheddar", "1 tomate ronde @120g", "40 g salade"],
+      "etapes": [
+        "Formez deux steaks et faites-les cuire 3 minutes de chaque côté.",
+        "Posez le cheddar sur les steaks en fin de cuisson pour qu'il fonde.",
+        "Toastez les pains, puis montez les burgers avec la salade et la tomate en rondelles."
+      ]
+    }
+  ]
+}
