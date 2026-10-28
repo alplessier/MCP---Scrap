@@ -116,10 +116,28 @@ function targets(member = me()) {
   return { daily, meal: daily ? C.mealTarget(daily, member.repas || 3) : null };
 }
 
-// Couverts et taille de portion : ceux du menu si la recette y est, sinon ceux de la fiche
-function servingOf(r) {
-  return state.menu[r.id] || ui.view[r.id] || { p: r.portions, t: 1 };
+// Pour qui ? who : membres servis, chacun avec la portion de son objectif ; guests : portions standard en plus.
+// Ce qui est enregistré (menu ou fiche) ; par défaut, les membres présents du foyer.
+function storedServing(r) {
+  return state.menu[r.id] || ui.view[r.id] || { who: present().map((m) => m.id), guests: 0 };
 }
+
+// Couverts (p) et taille moyenne des portions (t), recalculés à partir des profils actuels
+function servingOf(r) {
+  const s = storedServing(r);
+  if (!s.who) return { p: s.p, t: s.t || 1, sizes: [], guests: 0 }; // anciens menus : couverts simples
+  const members = s.who.map(memberById).filter(Boolean);
+  const sizes = isSnack(r)
+    ? members.map((m) => ({ id: m.id, nom: m.nom, size: 1, meal: targets(m).meal }))
+    : C.memberPortions(stats(r).macros[0], members);
+  const guests = s.guests || 0;
+  const p = sizes.length + guests;
+  if (!p) return { who: [], p: 1, t: 1, sizes: [], guests: 1 };
+  return { who: s.who, guests, p, t: (sizes.reduce((a, x) => a + x.size, 0) + guests) / p, sizes };
+}
+
+// Ce qu'on enregistre : qui et combien d'invités, pas le résultat (il suit les profils)
+const servingToStore = (s) => (s.who ? { who: [...s.who], guests: s.guests || 0 } : { p: s.p, t: s.t });
 
 function compute(r, serving = servingOf(r)) {
   const factor = (serving.p * serving.t) / r.portions;
@@ -230,20 +248,24 @@ function macroBars(macros, meal) {
   }).join("");
 }
 
+const thumb = (p) => (p && p.image
+  ? `<img class="ing-img" src="${esc(p.image)}" alt="" loading="lazy" width="56" height="56">`
+  : `<span class="ing-img ph" aria-hidden="true">🛍️</span>`);
+
 function ingredientsHtml(lines) {
   return `<ul class="ingredients">${lines.map((x) => {
-    if (x.error) return `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span></div><div class="error">${esc(x.error)}</div></li>`;
+    if (x.error) return `<li>${thumb(null)}<div><div class="ing-head"><span>${esc(x.ing.raw)}</span></div><div class="error">${esc(x.error)}</div></div></li>`;
     if (!x.product) {
-      return `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">—</span></div>
-        <div class="error">Aucun produit trouvé au Drive${x.ing.pieces != null && x.ing.grams == null ? " (indiquez un poids : « 2 oeufs @60g »)" : ""}</div></li>`;
+      return `<li>${thumb(null)}<div><div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">—</span></div>
+        <div class="error">Aucun produit trouvé au Drive${x.ing.pieces != null && x.ing.grams == null ? " (indiquez un poids : « 2 oeufs @60g »)" : ""}</div></div></li>`;
     }
     const options = x.choices.map((p) =>
       `<option value="${esc(p.ean)}"${p === x.product ? " selected" : ""}>${esc(p.nom)} — ${euro(p.prix)} (${esc(unitLabel(p))})${p.promo ? " · " + esc(p.promo) : ""}</option>`).join("");
-    return `<li>
+    return `<li>${thumb(x.product)}<div>
       <div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">${euro(x.cost)}</span></div>
       <select class="product-select" data-action="pin" data-key="${esc(x.key)}" aria-label="Produit pour ${esc(x.ing.name)}">${options}</select>
       <div class="ing-note">${x.macros ? `${num(x.macros[0])} kcal · P ${num(x.macros[1], 1)} g` : "macros inconnues"}${x.generic ? " · valeurs moyennes *" : ""}${x.product.promo ? ` · <span class="promo">${esc(x.product.promo)}</span>` : ""}</div>
-    </li>`;
+    </div></li>`;
   }).join("")}</ul>`;
 }
 
@@ -324,58 +346,64 @@ function viewRecipe(id) {
   const res = compute(r);
   const s = res.serving;
   const inMenu = !!state.menu[r.id];
-  const per = res.perPortion;
   const kcalStd = stats(r).macros[0];
   const traits = traitsOf(r);
   const compat = compatOf(r);
-  // portions de chaque membre présent, calées sur son repas idéal
-  const members = present().filter((x) => C.dailyTargets(x));
-  const portions = isSnack(r) ? [] : C.memberPortions(kcalStd, members);
-  const adapt = portions.length ? Math.round((portions.reduce((a, x) => a + x.size, 0) / portions.length) * 4) / 4 : null;
-  const people = Math.max(1, members.length);
-  const adapted = adapt !== null && s.t === adapt && s.p === people && !(adapt === 1 && people === r.portions);
-  const light = meal && !isSnack(r) && C.tooLightForMeal(kcalStd, meal);
-  const solo = members.length <= 1;
+  // une portion standard de la recette, telle que calculée pour ces quantités
+  const total = s.p * s.t;
+  const unit = { cost: res.cost / total, macros: res.macros.map((v) => v / total) };
+  const who = new Set(s.who || []);
+  // même doublée (portion plafonnée à ×2), la recette reste trop légère pour ces personnes
+  const light = isSnack(r) ? [] : s.sizes.filter((x) => x.meal && C.tooLightForMeal(kcalStd, x.meal));
   return `
     <a class="back" href="#/">← Recettes</a>
     <div class="detail">
       <div>
         ${tileHtml(r, "big")}
         <div class="panel" style="margin-top:16px">
-          <h2>Ingrédients</h2>
+          <h2>Ingrédients <small class="muted">· ${portionsLabel(s.p)}</small></h2>
           ${ingredientsHtml(res.lines)}
-          <p class="hint">Produits et prix du ${esc(cat.magasin.nom)}. Changez de produit dans la liste si besoin.</p>
+          <p class="hint">Quantités pour ${s.sizes.length ? "les personnes choisies, chacune selon son objectif" : `${portionsLabel(s.p)}`}. Produits et prix du ${esc(cat.magasin.nom)} ; changez de produit dans la liste si besoin.</p>
         </div>
       </div>
       <div>
         <div class="tags">${(r.tags || []).map((t) => `<span class="tag">${esc(book.tags[t] || (t === "perso" ? "Ma recette" : t))}</span>`).join("")}</div>
         <h1>${esc(r.nom)}</h1>
-        <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(per.cost)} par personne · ${euro(res.cost)} au total</p>
+        <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(res.cost)} au total · ${euro(res.cost / s.p)} par personne</p>
         ${compat.ok ? "" : `<div class="warning" role="note">⚠️ Pas adaptée à votre foyer : ${esc(compat.reasons.join(", "))}.</div>`}
         <p class="traits">${traits.allergens.length ? `<span>Contient : ${esc(traits.allergens.map((a) => C.ALLERGENS[a].label.toLowerCase()).join(", "))}</span>` : `<span>Sans allergène majeur détecté</span>`}
           ${traits.equipment.length ? `<span>Matériel : ${esc(traits.equipment.map((e) => C.EQUIPMENT[e].label.toLowerCase()).join(", "))}</span>` : `<span>Sans cuisson</span>`}</p>
         <div class="panel">
-          <div class="row">
-            ${stepperHtml("servings", r.id, portionsLabel(s.p))}
-            ${isSnack(r) && meal ? `<span class="fit">Collation : en plus des repas</span>`
-              : adapt === null ? `<a class="btn small" href="#/profil">🎯 Définir les objectifs du foyer</a>`
-              : adapt === 1 && s.t === 1 && (solo || s.p === people) ? `<span class="fit ok">✓ Portion idéale ${solo ? "pour votre objectif" : "pour le foyer"}</span>`
-              : `<button class="btn small" data-action="adapt" data-id="${esc(r.id)}" data-size="${adapted ? 1 : adapt}" data-people="${adapted ? s.p : people}">${adapted ? "↺ Portion standard"
-                : solo ? `🎯 Adapter à mon objectif (×${num(adapt, 2)})` : `👥 Adapter au foyer (${people} pers.)`}</button>`}
-          </div>
-          ${s.t !== 1 ? `<p class="hint">Portions ×${num(s.t, 2)} en moyenne, adaptées ${solo ? "à votre objectif" : "aux objectifs du foyer"}.</p>` : ""}
-          ${!solo && portions.length ? `<ul class="per-member">${portions.map((x) => `<li><span>${esc(state.members.find((mm) => mm.id === x.id)?.emoji || "🙂")} ${esc(x.nom)}</span>
-            <span>portion ×${num(x.size, 2)} · ${num(kcalStd * x.size)} kcal · ${num(stats(r).macros[1] * x.size)} g prot.</span></li>`).join("")}</ul>
-            <p class="hint">Servez à chacun sa portion : les quantités et les courses couvrent tout le foyer.</p>` : ""}
-          ${light ? `<p class="hint">Même doublée, cette recette reste légère pour votre objectif : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
+          <h2>Pour qui ?</h2>
+          ${s.who ? `<div class="who" role="group" aria-label="Personnes servies">${state.members.map((m) => {
+            const x = s.sizes.find((z) => z.id === m.id);
+            return `<button type="button" class="who-chip" data-action="serve-member" data-id="${esc(r.id)}" data-member="${esc(m.id)}" aria-pressed="${who.has(m.id)}">
+              <span class="avatar" aria-hidden="true">${esc(m.emoji)}</span><span><b>${esc(m.nom)}</b><small>${x ? (x.meal ? `portion ×${num(x.size, 2)}` : "portion standard") : "pas servi"}</small></span></button>`;
+          }).join("")}
+            <div class="guests">${stepperHtml("guests", r.id, `${s.guests} invité${s.guests > 1 ? "s" : ""}`, "small")}</div>
+          </div>`
+          : `<div class="row">${stepperHtml("servings", r.id, portionsLabel(s.p))}<button class="btn small" data-action="serve-household" data-id="${esc(r.id)}">👥 Servir le foyer</button></div>`}
+          <p class="hint">${isSnack(r) ? "Collation : une portion standard chacun, en plus des repas." : "Chaque personne cochée reçoit la portion qui correspond à son repas idéal ; les invités, une portion standard. Les quantités et le panier suivent."}</p>
           <div class="kpis">
-            <div class="kpi"><b>${num(per.macros[0])}</b><span>kcal / portion</span></div>
-            <div class="kpi"><b>${num(per.macros[1])} g</b><span>protéines</span></div>
-            <div class="kpi"><b>${euro(per.cost)}</b><span>par personne</span></div>
+            <div class="kpi"><b>${num(s.p)}</b><span>${s.p > 1 ? "personnes" : "personne"}</span></div>
+            <div class="kpi"><b>${num(res.macros[0])}</b><span>kcal au total</span></div>
+            <div class="kpi"><b>${euro(res.cost)}</b><span>pour le repas</span></div>
           </div>
-          ${macroBars(per.macros, meal)}
-          ${meal ? `<p class="hint">Barres : part d'un repas idéal pour ${esc(me().nom)} (${num(meal.kcal)} kcal, ${num(meal.proteines)} g de protéines).</p>`
-                 : `<p class="hint">Renseignez votre profil pour comparer à vos besoins.</p>`}
+          ${s.sizes.map((x) => {
+            const m = memberById(x.id);
+            const mac = unit.macros.map((v) => v * x.size);
+            return `<div class="member-intake">
+              <div class="mi-head"><span><span aria-hidden="true">${esc(m.emoji)}</span> <b>${esc(m.nom)}</b></span>
+                <span>${num(mac[0])} kcal${x.meal ? ` / ${num(x.meal.kcal)}` : ""} · ${euro(unit.cost * x.size)}</span></div>
+              ${macroBars(mac, isSnack(r) ? null : x.meal)}
+              ${x.meal ? "" : `<p class="hint"><a href="#/profil/${encodeURIComponent(m.id)}">Complétez le profil de ${esc(m.nom)}</a> pour adapter sa portion.</p>`}
+            </div>`;
+          }).join("")}
+          ${!s.sizes.length || s.guests ? `<div class="member-intake">
+              <div class="mi-head"><span><b>${s.sizes.length ? `${s.guests} invité${s.guests > 1 ? "s" : ""}` : "Par portion"}</b></span><span>${num(unit.macros[0])} kcal · ${euro(unit.cost)} chacun</span></div>
+              ${macroBars(unit.macros, null)}
+            </div>` : ""}
+          ${light.length ? `<p class="hint">Même doublée, cette recette reste légère pour ${esc(light.map((x) => x.nom).join(", "))} : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
           ${res.missingMacros.length ? `<p class="hint">Macros inconnues pour : ${esc(res.missingMacros.join(", "))}.</p>` : ""}
         </div>
         <div class="actions" style="margin-top:16px">
@@ -437,10 +465,10 @@ function viewMenu() {
           <a href="#/recette/${encodeURIComponent(r.id)}">${tileHtml(r)}</a>
           <div>
             <a href="#/recette/${encodeURIComponent(r.id)}"><div class="card-title">${esc(r.nom)}</div></a>
-            <div class="card-meta"><span>${euro(res.perPortion.cost)}/pers.</span><span class="prot">💪 ${num(res.perPortion.macros[1])} g</span><span>${num(res.perPortion.macros[0])} kcal</span>${res.serving.t !== 1 ? `<span>portions ×${num(res.serving.t, 2)}</span>` : ""}</div>
+            <div class="card-meta"><span>${euro(res.perPortion.cost)}/pers.</span><span class="prot">💪 ${num(res.perPortion.macros[1])} g</span><span>${num(res.perPortion.macros[0])} kcal</span>${res.serving.sizes.length ? `<span title="Personnes servies">${res.serving.sizes.map((x) => esc(memberById(x.id).emoji)).join("")}${res.serving.guests ? ` +${res.serving.guests}` : ""}</span>` : ""}</div>
           </div>
           <div class="menu-side">
-            ${stepperHtml("servings", r.id, portionsLabel(res.serving.p), "small")}
+            ${stepperHtml(res.serving.who ? "guests" : "servings", r.id, portionsLabel(res.serving.p), "small")}
             <button class="link-btn" data-action="toggle-menu" data-id="${esc(r.id)}">Retirer</button>
           </div>
         </article>`).join("")}
@@ -674,26 +702,95 @@ function viewMember(id) {
     </div>`;
 }
 
-function viewCreate(id) {
+// Le brouillon est gardé (et enregistré) tant qu'il n'est pas validé : on peut aller chercher
+// des produits dans « Produits du Drive » et revenir.
+function draftFor(id) {
   const editing = id ? state.custom.find((r) => r.id === id) : null;
-  const draft = ui.draft || (ui.draft = editing
-    ? { id: editing.id, nom: editing.nom, portions: editing.portions, texte: editing.ingredients.join("\n") }
-    : { id: null, nom: "", portions: 2, texte: "" });
-  return `<a class="back" href="#/">← Recettes</a>
-    <div class="page-head"><h1>${editing ? "Modifier ma recette" : "Créer ma recette"}</h1></div>
+  if (!state.draft || (state.draft.id || null) !== (editing ? editing.id : null)) {
+    state.draft = editing
+      ? { id: editing.id, nom: editing.nom, portions: editing.portions, texte: editing.ingredients.join("\n") }
+      : { id: null, nom: "", portions: 1, texte: "" };
+  }
+  return { draft: state.draft, editing };
+}
+const draftLines = (d) => (d.texte || "").split("\n").map((l) => l.trim()).filter(Boolean);
+const draftRecipe = (d) => ({ id: d.id || "brouillon", portions: Math.max(1, +d.portions || 1), ingredients: draftLines(d) });
+
+// Ligne d'ingrédient pour un produit du Drive : nom lisible (sans la marque), épinglé par son code-barres
+function lineForProduct(p) {
+  let name = p.nom;
+  if (p.marque) name = name.replace(new RegExp(`\\s*${p.marque.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i"), "");
+  name = name.replace(/[@#]/g, " ").replace(/\s+/g, " ").trim().slice(0, 48).toLowerCase();
+  return p.unite === "PIECE" ? `1 ${name} #${p.ean}` : `100 g ${name} #${p.ean}`;
+}
+
+function addToDraft(ean) {
+  const p = cat.byEan.get(ean);
+  if (!p) return;
+  const d = state.draft || draftFor(null).draft;
+  d.texte = [...draftLines(d), lineForProduct(p)].join("\n");
+  save();
+  return d;
+}
+
+const QTY_RE = /^\s*(\d+(?:[.,]\d+)?)\s*(kg|g|cl|ml|l|pcs?|pièces?|x)?\.?\s+/i;
+
+function builderHtml(d) {
+  const r = draftRecipe(d);
+  if (!r.ingredients.length) return `<p class="muted">Aucun ingrédient : cherchez un produit ci-dessous.</p>`;
+  const res = compute(r, { p: r.portions, t: 1 });
+  return `<ul class="ingredients builder">${res.lines.map((x, i) => {
+    const m = r.ingredients[i].match(QTY_RE);
+    const qty = m ? m[1].replace(",", ".") : "";
+    const unitText = m ? ((m[2] || "").toLowerCase() || "pièce(s)") : "";
+    const options = x.product ? x.choices.slice(0, 12).map((p) =>
+      `<option value="${esc(p.ean)}"${p === x.product ? " selected" : ""}>${esc(p.nom)} — ${euro(p.prix)}</option>`).join("") : "";
+    return `<li>${thumb(x.product)}<div>
+      <div class="ing-head"><span>${esc(x.ing.name || x.ing.raw)}</span><span class="price">${x.product ? euro(x.cost) : "—"}</span></div>
+      <div class="builder-row">
+        ${m ? `<label class="qty"><input type="number" inputmode="decimal" min="0" step="any" data-action="ing-qty" data-index="${i}" value="${esc(qty)}" aria-label="Quantité de ${esc(x.ing.name)}"><span>${esc(unitText)}</span></label>` : ""}
+        ${x.product ? `<select class="product-select" data-action="ing-product" data-index="${i}" aria-label="Produit pour ${esc(x.ing.name)}">${options}</select>` : `<span class="error">${esc(x.error || "Aucun produit trouvé au Drive")}</span>`}
+        <button type="button" class="icon-btn" data-action="ing-remove" data-index="${i}" aria-label="Retirer ${esc(x.ing.name || "")}">✕</button>
+      </div>
+      ${x.macros ? `<div class="ing-note">${num(x.macros[0])} kcal · P ${num(x.macros[1], 1)} g · G ${num(x.macros[2], 1)} g · L ${num(x.macros[3], 1)} g${x.generic ? " · valeurs moyennes *" : ""}</div>` : ""}
+    </div></li>`;
+  }).join("")}</ul>`;
+}
+
+function suggestHtml(q) {
+  if (!C.queryTokens(q).length) return "";
+  const hits = C.search(cat, q).slice(0, 8);
+  if (!hits.length) return `<p class="muted">Aucun produit trouvé.</p>`;
+  return `<ul class="suggest">${hits.map((p) => `<li><button type="button" data-action="add-ing" data-ean="${esc(p.ean)}">
+    ${thumb(p)}<span><b>${esc(p.nom)}</b><small>${euro(p.prix)} · ${esc(unitLabel(p))}${p.macros ? ` · ${num(p.macros[0])} kcal · P ${num(p.macros[1], 1)} g / 100 g` : ""}</small></span>
+    <span class="plus" aria-hidden="true">+</span></button></li>`).join("")}</ul>`;
+}
+
+function viewCreate(id) {
+  const { draft, editing } = draftFor(id);
+  return `<div class="page-head"><h1>${editing ? "Modifier ma recette" : "Créer ma recette"}</h1></div>
     <div class="two-cols free">
       <div class="panel">
-        <label class="field" style="margin-bottom:12px">Nom<input type="text" data-action="draft" data-field="nom" value="${esc(draft.nom)}" placeholder="Mon bowl du dimanche"></label>
-        <label class="field" style="margin-bottom:12px">Couverts<input type="number" min="1" max="20" data-action="draft" data-field="portions" value="${esc(draft.portions)}"></label>
-        <label class="field">Ingrédients — un par ligne
-          <textarea data-action="draft" data-field="texte" spellcheck="false" placeholder="300 g filet de poulet&#10;150 g riz basmati&#10;200 g brocolis&#10;2 oeufs @60g">${esc(draft.texte)}</textarea></label>
-        <details class="syntax"><summary>Format des lignes</summary>
+        <div class="form-grid">
+          <label class="field">Nom<input type="text" data-action="draft" data-field="nom" value="${esc(draft.nom)}" placeholder="Mon bowl du dimanche"></label>
+          <label class="field">Portions de la recette<input type="number" min="1" max="20" data-action="draft" data-field="portions" value="${esc(draft.portions)}"></label>
+        </div>
+        <h2 style="margin-top:18px">Ingrédients</h2>
+        <div id="builder">${builderHtml(draft)}</div>
+        <div class="ing-search">
+          <input id="ing-search" class="search" type="search" data-action="ing-query" value="${esc(ui.ingQuery || "")}" placeholder="➕ Ajouter : poulet, riz, skyr…" autocomplete="off" aria-label="Chercher un produit à ajouter">
+          <div id="ing-suggest">${suggestHtml(ui.ingQuery || "")}</div>
+          <p class="hint">Ou parcourez <a href="#/produits">tous les produits du Drive</a> (tri par protéines, par rayon…) et ajoutez-les avec <b>+ Ma recette</b>.</p>
+        </div>
+        <details class="syntax"><summary>Saisie en texte</summary>
+          <textarea data-action="draft" data-field="texte" spellcheck="false" placeholder="300 g filet de poulet&#10;150 g riz basmati&#10;2 oeufs @60g">${esc(draft.texte)}</textarea>
           <p><code>200 g blanc de poulet</code> — unités : g, kg, ml, cl, l.<br><code>2 oeufs @60g</code> — pièces, avec le poids d'une pièce.<br>
           Comptez le riz et les pâtes en poids sec.</p></details>
         <div class="actions" style="margin-top:14px">
           <button class="btn primary" data-action="save-draft">${editing ? "Enregistrer" : "Ajouter à mes recettes"}</button>
           <button class="btn" data-action="share-draft">Copier le lien</button>
-          ${editing ? `<button class="btn ghost" data-action="delete-custom" data-id="${esc(editing.id)}">Supprimer</button>` : ""}
+          ${editing ? `<button class="btn ghost" data-action="delete-custom" data-id="${esc(editing.id)}">Supprimer</button>`
+            : draftLines(draft).length ? `<button class="btn ghost" data-action="reset-draft">Tout effacer</button>` : ""}
         </div>
       </div>
       <div id="draft-preview">${draftPreview(draft)}</div>
@@ -701,19 +798,21 @@ function viewCreate(id) {
 }
 
 function draftPreview(draft) {
-  const r = { id: draft.id || "brouillon", portions: Math.max(1, +draft.portions || 1), ingredients: C.parseLines(draft.texte) };
-  if (!r.ingredients.length) return `<div class="panel"><p class="muted">Tapez vos ingrédients : le coût et les macros s'affichent ici.</p></div>`;
+  const r = draftRecipe(draft);
+  if (!r.ingredients.length) return `<div class="panel"><p class="muted">Ajoutez vos ingrédients : le coût et les macros par portion s'affichent ici.</p></div>`;
   const res = compute(r, { p: r.portions, t: 1 });
   const { meal } = targets();
-  return `<div class="panel">
+  return `<div class="panel sticky">
+    <h2>Par portion</h2>
     <div class="kpis">
-      <div class="kpi"><b>${num(res.perPortion.macros[0])}</b><span>kcal / portion</span></div>
+      <div class="kpi"><b>${num(res.perPortion.macros[0])}</b><span>kcal</span></div>
       <div class="kpi"><b>${num(res.perPortion.macros[1])} g</b><span>protéines</span></div>
       <div class="kpi"><b>${euro(res.perPortion.cost)}</b><span>par personne</span></div>
     </div>
     ${macroBars(res.perPortion.macros, meal)}
-  </div>
-  <div class="panel"><h2>Produits du Drive</h2>${ingredientsHtml(res.lines)}</div>`;
+    ${meal ? `<p class="hint">Comparé au repas idéal de ${esc(me().nom)} (${num(meal.kcal)} kcal). Une fois enregistrée, la recette s'adapte à chaque profil.</p>` : ""}
+    <p class="hint">${portionsLabel(r.portions)} · ${euro(res.cost)} au total.</p>
+  </div>`;
 }
 
 const PRODUCT_SORTS = [["pertinence", "Pertinence"], ["proteines", "Protéines / 100 g"], ["proteines-kcal", "Protéines / 100 kcal"],
@@ -762,6 +861,7 @@ function viewProducts() {
         <div><h3>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.nom)}</a>` : esc(p.nom)}</h3>
           <div><strong>${euro(p.prix)}</strong> <span class="muted">${esc(unitLabel(p))}</span></div>
           <div class="muted" style="font-size:.8rem">${esc(p.conditionnement)}${p.promo ? ` · <span style="color:var(--brand);font-weight:800">${esc(p.promo)}</span>` : ""}</div></div>
+        <button type="button" class="btn small add-ing" data-action="add-ing" data-ean="${esc(p.ean)}">+ Ma recette</button>
         <div class="nutri">${m ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span><span>/ 100 g</span>
           ${density > 0 ? `<span class="ratio" title="Grammes de protéines pour 100 kcal">${num(density, 1)} g prot. / 100 kcal</span>` : ""}
           ${ppe > 0 ? `<span>${num(ppe)} g prot. / €</span>` : ""}` : "<span>macros non renseignées</span>"}</div>
@@ -783,7 +883,7 @@ const ROUTES = [
   [/^#\/courses$/, () => viewCourses(), "courses"],
   [/^#\/profil$/, () => viewProfil(), "profil"],
   [/^#\/profil\/(.+)$/, (m) => viewMember(decodeURIComponent(m[1])), "profil"],
-  [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "recettes"],
+  [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "creer"],
   [/^#\/produits$/, () => viewProducts(), "recettes"],
 ];
 
@@ -795,7 +895,7 @@ function render({ keepScroll = false } = {}) {
   if (legacy) {
     try {
       const r = C.decode(legacy[1]);
-      ui.draft = { id: null, nom: r.nom || "", portions: r.portions || 2, texte: r.texte || "" };
+      state.draft = { id: null, nom: r.nom || "", portions: r.portions || 2, texte: r.texte || "" };
     } catch { /* lien abîmé */ }
     location.replace("#/creer");
     return;
@@ -837,7 +937,7 @@ function toggleMenu(id) {
     delete state.menu[id];
     toast(`Retiré du menu : ${r.nom}`);
   } else {
-    state.menu[id] = { ...(ui.view[id] || { p: present().length > 1 ? householdSize() : r.portions, t: 1 }) };
+    state.menu[id] = servingToStore(servingOf(r));
     toast(`Ajouté au menu : ${r.nom}`);
   }
   save();
@@ -846,7 +946,7 @@ function toggleMenu(id) {
 
 function setServing(id, change) {
   const r = recipeById(id);
-  const s = { ...servingOf(r), ...change(servingOf(r)) };
+  const s = servingToStore({ ...storedServing(r), ...change(storedServing(r)) });
   if (state.menu[id]) state.menu[id] = s; else ui.view[id] = s;
   save();
   render({ keepScroll: true });
@@ -932,7 +1032,7 @@ function setHouseholdMode(mode) {
 }
 
 function saveDraft() {
-  const d = ui.draft;
+  const d = state.draft;
   const lines = C.parseLines(d.texte);
   if (!lines.length) return toast("Ajoutez au moins un ingrédient.");
   let r = d.id && state.custom.find((x) => x.id === d.id);
@@ -943,8 +1043,9 @@ function saveDraft() {
     state.custom.unshift(r);
   }
   statsCache.clear();
+  state.draft = null;
+  ui.ingQuery = "";
   save();
-  ui.draft = null;
   location.hash = `#/recette/${encodeURIComponent(r.id)}`;
   toast("Recette enregistrée.");
 }
@@ -955,14 +1056,29 @@ document.addEventListener("click", (e) => {
   const { action, id } = el.dataset;
   switch (action) {
     case "toggle-menu": e.preventDefault(); toggleMenu(id); break;
-    case "servings": setServing(id, (s) => ({ p: Math.min(20, Math.max(1, s.p + +el.dataset.delta)) })); break;
-    case "adapt": {
-      const t = +el.dataset.size;
-      const p = +el.dataset.people || servingOf(recipeById(id)).p;
-      setServing(id, () => ({ t, p }));
-      toast(t === 1 && !el.dataset.people ? "Portion standard" : present().length > 1 ? `Adaptée au foyer : ${p} couverts` : `Portions ×${num(t, 2)} pour votre objectif`);
+    case "servings": {
+      // dans le menu : avec des profils, le − / + règle les invités
+      const d = +el.dataset.delta;
+      setServing(id, (s) => (s.who ? { guests: Math.min(20, Math.max(s.who.length ? 0 : 1, (s.guests || 0) + d)) }
+        : { p: Math.min(20, Math.max(1, s.p + d)) }));
       break;
     }
+    case "guests": {
+      const d = +el.dataset.delta;
+      setServing(id, (s) => ({ guests: Math.min(20, Math.max(s.who.length ? 0 : 1, (s.guests || 0) + d)) }));
+      break;
+    }
+    case "serve-member": {
+      const mid = el.dataset.member;
+      setServing(id, (s) => {
+        const set = new Set(s.who);
+        if (set.has(mid)) set.delete(mid); else set.add(mid);
+        if (!set.size && !s.guests) { toast("Au moins une personne à table."); return {}; }
+        return { who: state.members.map((m) => m.id).filter((x) => set.has(x)) };
+      });
+      break;
+    }
+    case "serve-household": setServing(id, () => ({ who: present().map((m) => m.id), guests: 0, p: undefined, t: undefined })); break;
     case "tag": ui.tag = el.dataset.tag || null; render({ keepScroll: true }); break;
     case "cook-step": ui.cookStep = Math.max(0, ui.cookStep + +el.dataset.delta); render(); break;
     case "member": updateMember(id, el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
@@ -997,16 +1113,37 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "save-draft": saveDraft(); break;
+    case "reset-draft": state.draft = null; ui.ingQuery = ""; save(); render(); break;
+    case "add-ing": {
+      const d = addToDraft(el.dataset.ean);
+      if (!d) break;
+      if (/^#\/creer/.test(location.hash)) {
+        ui.ingQuery = "";
+        render({ keepScroll: true });
+        $("#ing-search")?.focus();
+      } else {
+        toast(`Ajouté à ${d.nom ? `« ${d.nom} »` : "votre recette"} (${draftLines(d).length} ingrédient${draftLines(d).length > 1 ? "s" : ""}).`);
+      }
+      break;
+    }
+    case "ing-remove": {
+      const lines = draftLines(state.draft);
+      lines.splice(+el.dataset.index, 1);
+      state.draft.texte = lines.join("\n");
+      save();
+      render({ keepScroll: true });
+      break;
+    }
     case "share-draft": {
-      const url = `${location.origin}${location.pathname}#r=${C.encode(ui.draft)}`;
+      const url = `${location.origin}${location.pathname}#r=${C.encode(state.draft)}`;
       if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => toast("Lien copié."), () => toast("Copie impossible."));
       break;
     }
     case "delete-custom":
       state.custom = state.custom.filter((r) => r.id !== id);
       delete state.menu[id];
+      state.draft = null;
       save();
-      ui.draft = null;
       location.hash = "#/";
       toast("Recette supprimée.");
       break;
@@ -1020,8 +1157,7 @@ document.addEventListener("change", (e) => {
     state.pins[el.dataset.key] = el.value;
     statsCache.clear();
     save();
-    if (ui.draft) $("#draft-preview").innerHTML = draftPreview(ui.draft);
-    else render({ keepScroll: true });
+    render({ keepScroll: true });
   } else if (el.dataset.action === "member-present") {
     const m = memberById(el.dataset.id);
     m.present = el.checked;
@@ -1030,6 +1166,15 @@ document.addEventListener("change", (e) => {
     render({ keepScroll: true });
   } else if (el.dataset.action === "member-dislike") {
     if (el.value) toggleMemberPref(el.dataset.id, "deteste", el.value);
+    render({ keepScroll: true });
+  } else if (el.dataset.action === "ing-product") {
+    const lines = draftLines(state.draft);
+    const i = +el.dataset.index;
+    lines[i] = `${lines[i].replace(/\s+#\d{8,14}\s*$/, "")} #${el.value}`;
+    state.draft.texte = lines.join("\n");
+    save();
+    render({ keepScroll: true });
+  } else if (el.dataset.action === "ing-qty") {
     render({ keepScroll: true });
   } else if (el.dataset.action === "product-rayon") {
     ui.productRayon = el.value;
@@ -1049,7 +1194,8 @@ document.addEventListener("change", (e) => {
 
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const rerenderSoon = debounce(() => render({ keepScroll: true }), 220);
-const previewSoon = debounce(() => { const el = $("#draft-preview"); if (el && ui.draft) el.innerHTML = draftPreview(ui.draft); }, 250);
+const previewSoon = debounce(() => { const el = $("#draft-preview"); if (el && state.draft) el.innerHTML = draftPreview(state.draft); }, 250);
+const suggestSoon = debounce(() => { const el = $("#ing-suggest"); if (el) el.innerHTML = suggestHtml(ui.ingQuery || ""); }, 200);
 
 document.addEventListener("input", (e) => {
   const el = e.target;
@@ -1057,7 +1203,19 @@ document.addEventListener("input", (e) => {
   else if (el.dataset.action === "product-query") { ui.productQuery = el.value; rerenderSoon(); }
   else if (el.dataset.action === "member-input") { updateMember(el.dataset.id, el.dataset.field, el.value); rerenderSoon(); }
   else if (el.dataset.action === "foyer-input") { state.foyer[el.dataset.field] = el.value; changed(); rerenderSoon(); }
-  else if (el.dataset.action === "draft") { ui.draft[el.dataset.field] = el.value; previewSoon(); }
+  else if (el.dataset.action === "draft") { state.draft[el.dataset.field] = el.value; save(); previewSoon(); }
+  else if (el.dataset.action === "ing-query") { ui.ingQuery = el.value; suggestSoon(); }
+  else if (el.dataset.action === "ing-qty") {
+    // la quantité remplace le nombre en tête de ligne ; on garde l'unité, le nom et le produit choisi
+    const lines = draftLines(state.draft);
+    const i = +el.dataset.index;
+    const v = el.value.replace(",", ".");
+    if (!(+v > 0)) return;
+    lines[i] = lines[i].replace(/^\s*\d+(?:[.,]\d+)?/, v);
+    state.draft.texte = lines.join("\n");
+    save();
+    previewSoon();
+  }
 });
 
 document.addEventListener("keydown", (e) => {
@@ -1072,7 +1230,6 @@ $("#bookmarklet").addEventListener("click", (e) => {
 });
 
 window.addEventListener("hashchange", () => {
-  if (!/^#\/creer/.test(location.hash)) ui.draft = null;
   render();
 });
 

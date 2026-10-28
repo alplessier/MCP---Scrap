@@ -378,3 +378,37 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em;
 .form-grid .span-all { grid-column: 1 / -1; }
 .form-grid { align-items: start; }
 .product .nutri .ratio { color: var(--p); }
+
+/* ---------- Images des ingrédients ---------- */
+.ingredients li { grid-template-columns: 56px minmax(0, 1fr); align-items: start; gap: 12px; }
+.ingredients li > div { display: grid; gap: 6px; min-width: 0; }
+.ing-img { width: 56px; height: 56px; object-fit: contain; border-radius: 12px; background: #fff; border: 1px solid var(--line); }
+.ing-img.ph { display: grid; place-items: center; font-size: 1.4rem; background: var(--surface-2); }
+
+/* ---------- Pour qui ? ---------- */
+.who { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
+.who-chip { display: flex; align-items: center; gap: 8px; border: 2px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 14px 4px 4px; cursor: pointer; text-align: left; color: var(--ink); }
+.who-chip .avatar { width: 36px; height: 36px; font-size: 1.3rem; }
+.who-chip b { display: block; font-size: 0.92rem; }
+.who-chip small { color: var(--muted); font-weight: 700; font-size: 0.75rem; }
+.who-chip[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+.who-chip[aria-pressed="false"] { opacity: 0.6; }
+.member-intake { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.mi-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 0.92rem; font-weight: 700; margin-bottom: 4px; }
+.mi-head > span:last-child { color: var(--muted); }
+
+/* ---------- Créer ma recette ---------- */
+.builder-row { display: flex; gap: 8px; align-items: center; }
+.builder-row .product-select { flex: 1; min-width: 0; }
+.qty { display: flex; align-items: center; gap: 4px; font-weight: 800; color: var(--muted); font-size: 0.85rem; }
+.qty input { width: 76px; padding: 8px 10px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-weight: 800; }
+.icon-btn { border: 0; background: var(--surface-2); color: var(--muted); width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-weight: 800; flex: none; }
+.ing-search { margin-top: 14px; }
+.ing-search .search { width: 100%; }
+.suggest { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.suggest button { width: 100%; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; border: 2px solid var(--line); background: var(--surface); border-radius: var(--radius-s); padding: 6px 10px 6px 6px; cursor: pointer; color: var(--ink); font: inherit; }
+.suggest button:hover { border-color: var(--brand); }
+.suggest b { display: block; font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest small { color: var(--muted); font-weight: 700; font-size: 0.78rem; }
+.suggest .plus { width: 32px; height: 32px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; }
+.product .add-ing { grid-column: 1 / -1; justify-self: start; }
