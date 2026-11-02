@@ -8,7 +8,7 @@ n'avaient pas encore de fiche.
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -28,12 +28,19 @@ TIME_BUDGET = float(os.environ.get("NUTRITION_BUDGET_MIN", 100)) * 60  # le rest
 RETRY_MISSING_AFTER = timedelta(days=28)
 
 
+# Nutriments suivis en plus des macros, pour 100 g (None : non renseigné)
+NUTRIENTS = ("fibres", "sucres", "satures", "sel")
+OFF_NUTRIENT_KEYS = ("fiber_100g", "sugars_100g", "saturated-fat_100g", "salt_100g")
+
+
 @dataclass
 class Macros:
     kcal: float = 0.0
     proteines: float = 0.0
     glucides: float = 0.0
     lipides: float = 0.0
+    # fibres, sucres, acides gras saturés, sel (g pour 100 g) ; None si la fiche ne les donne pas
+    nutriments: list | None = field(default=None, compare=False)
 
     def __add__(self, other: "Macros") -> "Macros":
         return Macros(*(a + b for a, b in zip(self.as_tuple(), other.as_tuple())))
@@ -152,6 +159,44 @@ GENERIC_PER_100G = {
 }
 
 
+# Fibres, sucres, acides gras saturés et sel pour 100 g des mêmes aliments (approximations Ciqual)
+GENERIC_NUTRIENTS = {
+    "blanc de poulet": (0, 0, 0.6, 0.15), "filet de poulet": (0, 0, 0.6, 0.15), "poulet": (0, 0, 2.3, 0.2),
+    "dinde": (0, 0, 0.5, 0.15), "steak hache": (0, 0, 3, 0.2), "boeuf": (0, 0, 2.5, 0.15),
+    "saumon fume": (0, 0.5, 1.8, 3), "saumon": (0, 0, 2.5, 0.15), "thon": (0, 0, 0.3, 0.9),
+    "cabillaud": (0, 0, 0.1, 0.2), "crevette": (0, 0, 0.3, 1.2), "jambon": (0, 0.5, 1, 2),
+    "oeuf": (0, 0.7, 2.7, 0.35), "tofu": (1, 0.5, 1.2, 0.05), "skyr": (0, 4, 0.1, 0.1),
+    "yaourt grecque": (0, 4, 6, 0.12), "yaourt": (0, 5, 1.3, 0.12), "fromage blanc": (0, 4, 2, 0.1),
+    "fromage frais": (0, 4, 2.4, 0.1), "feta": (0, 1, 14, 2.8), "parmesan": (0, 0, 19, 1.6),
+    "cheddar": (0, 0.5, 21, 1.8), "lait de coco": (1, 2.5, 16, 0.05), "lait": (0, 4.8, 1, 0.11),
+    "beurre de cacahuete": (6, 8, 10, 0.5), "beurre": (0, 0.6, 54, 0.03), "huile": (0, 0, 14, 0),
+    "riz": (1.4, 0.3, 0.2, 0), "pate": (3, 3, 0.3, 0), "penne": (3, 3, 0.3, 0), "avoine": (10, 1, 1.3, 0),
+    "muesli": (7, 20, 1.5, 0.1), "wrap": (2.5, 3, 3, 1.2), "pain": (3, 3, 0.6, 1.2), "quinoa": (7, 3, 0.7, 0),
+    "lentille": (11, 2, 0.2, 0.02), "pois chiche": (5, 0.5, 0.3, 0.6), "haricots rouges": (6, 0.5, 0.1, 0.5),
+    "petits pois": (5, 3, 0.1, 0.4), "pomme de terre": (1.8, 0.8, 0, 0), "patate douce": (3, 4.2, 0, 0.1),
+    "brocoli": (2.6, 1.7, 0.1, 0.03), "courgette": (1, 1.5, 0.1, 0), "haricot vert": (3, 1.5, 0, 0),
+    "epinard": (2.2, 0.4, 0.1, 0.1), "carotte": (2.8, 4.7, 0, 0.1), "pulpe de tomate": (1, 3.5, 0, 0.1),
+    "sauce tomate": (1.5, 5, 0.2, 0.9), "tomate": (1.2, 2.6, 0, 0), "oignon": (1.7, 4.5, 0, 0),
+    "salade": (1.3, 0.8, 0, 0), "citron": (1, 2.5, 0, 0), "avocat": (6.7, 0.7, 2.1, 0), "banane": (2.6, 17, 0.1, 0),
+    "fruits rouges": (5, 5, 0, 0), "pomme": (2.4, 10, 0, 0), "amande": (12, 4.4, 3.8, 0), "pesto": (2, 2, 7, 2.5),
+    "aubergine": (3, 3, 0, 0), "ail": (2.1, 1, 0.1, 0.04), "corn flakes": (3, 8, 0.2, 1.7),
+    "macaroni": (3, 3, 0.3, 0), "raisins secs": (3.7, 59, 0.1, 0.03), "chou fleur": (2, 2, 0.1, 0.03),
+    "poivron": (2, 4, 0, 0), "concombre": (0.5, 1.7, 0, 0), "champignon": (1, 0.3, 0, 0.02),
+    "mais": (2.4, 4, 0.2, 0.6), "legumes": (3, 3, 0, 0.1), "olives noires": (3, 0, 4, 3),
+    "myrtille": (2.4, 10, 0, 0), "datte": (8, 63, 0, 0), "moutarde": (3, 3, 0.7, 5.5), "creme": (0, 4, 8, 0.08),
+    "emmental": (0, 0, 18, 0.5), "mozzarella": (0, 1, 12, 0.5), "chevre": (0, 1, 14, 1.2), "galette": (3, 1, 0.3, 1),
+    "lasagne": (3, 3, 0.3, 0), "semoule": (3.5, 1, 0.3, 0), "boulgour": (6, 0.5, 0.3, 0),
+    "gnocchi": (1.5, 0.8, 0.1, 1), "farine": (3, 1, 0.2, 0), "chapelure": (4, 5, 0.7, 1.5),
+    "speculoos": (2, 38, 8, 0.8), "levure": (0, 0, 0, 12), "chocolat noir": (11, 28, 23, 0),
+    "cacao": (30, 1, 13, 0.1), "whey": (0, 6, 3, 0.5), "chia": (34, 0, 3.3, 0), "noix": (6.7, 2.6, 6, 0),
+    "tahin": (9, 0.5, 8, 0.1), "paprika": (35, 10, 2, 0.2), "ras el hanout": (25, 5, 2, 0.3),
+    "curcuma": (21, 3, 1.8, 0.1), "cannelle": (53, 2, 0.3, 0), "sauce soja": (0.8, 1, 0, 14.5),
+    "miel": (0, 80, 0, 0), "curry": (33, 3, 2.5, 0.1), "cumin": (11, 2, 1.5, 0.4),
+}
+for _key, _values in GENERIC_NUTRIENTS.items():
+    GENERIC_PER_100G[_key].nutriments = list(_values)
+
+
 def generic_per_100g(ingredient_name: str) -> Macros | None:
     return next((m for key, m in GENERIC_PER_100G.items() if matches(key, ingredient_name)), None)
 
@@ -168,7 +213,19 @@ def macros_from_nutriments(n: dict) -> Macros | None:
     # Certaines fiches ont 0 kcal mais des macros renseignées : on recalcule (Atwater 4/4/9).
     if m.kcal == 0 and (m.proteines or m.glucides or m.lipides):
         m.kcal = round(4 * m.proteines + 4 * m.glucides + 9 * m.lipides)
+    m.nutriments = nutrients_from_nutriments(n)
     return m
+
+
+def nutrients_from_nutriments(n: dict) -> list | None:
+    """Fibres, sucres, acides gras saturés et sel pour 100 g ; None pour une valeur absente de la fiche."""
+    values = []
+    for key in OFF_NUTRIENT_KEYS:
+        try:
+            values.append(round(float(n[key]), 2) if n.get(key) not in (None, "") else None)
+        except (TypeError, ValueError):
+            values.append(None)
+    return values if any(v is not None for v in values) else None
 
 
 def macros_from_off(payload: dict) -> Macros | None:
@@ -215,15 +272,18 @@ def fetch_one_by_one(eans: list[str], firecrawl=None) -> dict[str, Macros | None
 
 
 def eans_to_fetch(eans, known: dict, today: date) -> list[str]:
-    """Produits jamais vus, et produits sans fiche vérifiés il y a plus de RETRY_MISSING_AFTER."""
-    todo = []
+    """Produits jamais vus, produits sans fiche vérifiés il y a plus de RETRY_MISSING_AFTER, puis
+    produits connus d'avant l'ajout des nutriments (fibres, sucres...), à compléter."""
+    todo, backfill = [], []
     for ean in eans:
         entry = known.get(ean)
         if entry is None:
             todo.append(ean)
         elif entry["m"] is None and today - date.fromisoformat(entry["vu"]) >= RETRY_MISSING_AFTER:
             todo.append(ean)
-    return todo
+        elif entry["m"] is not None and "n" not in entry:
+            backfill.append(ean)
+    return todo + backfill
 
 
 def update_nutrition(data_dir: Path, firecrawl=None, log=print, time_budget: float = TIME_BUDGET) -> dict:
@@ -247,6 +307,8 @@ def update_nutrition(data_dir: Path, firecrawl=None, log=print, time_budget: flo
             results = fetch_one_by_one(batch, firecrawl)
         for ean, m in results.items():
             known[ean] = {"m": list(m.as_tuple()) if m else None, "vu": today.isoformat()}
+            if m:
+                known[ean]["n"] = m.nutriments
             found += m is not None
             done += 1
         # enregistré à chaque lot : un relevé interrompu ne perd pas ce qui est déjà fait

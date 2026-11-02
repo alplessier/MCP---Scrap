@@ -213,3 +213,20 @@ test("planning : créneaux selon le nombre de repas et repas manquants", () => {
   const plan = { 0: { dejeuner: { id: "x", who: ["a", "b"] }, "petit-dej": { id: "y", who: ["a"] } } };
   assert.deepEqual(Core.planGaps(plan, members), { a: 21 - 2, b: 14 - 1 });
 });
+
+test("nutriments : ceux du produit, sinon les valeurs moyennes, et repères du jour", () => {
+  const cat = Core.loadCatalogue({
+    maj: "2026-11-03", magasin: { ref: "575", nom: "Drive Test" },
+    colonnes: ["ean", "nom", "prix", "prix_unite", "unite", "categorie", "macros", "nutriments"],
+    produits: [["30000001", "Skyr nature", 2, 4, "KG", "", [60, 10, 4, 0.2], [0, 3.5, 0.1, 0.1]], ["30000002", "Riz basmati", 2, 2, "KG", "", null, null]],
+    generique: { riz: [350, 7.5, 78, 0.6, 1.4, 0.3, 0.2, 0], "filet de poulet": [115, 24, 0, 2] },
+  });
+  const lines = Core.computeLines(cat, ["200 g skyr nature #30000001", "100 g riz basmati #30000002", "100 g filet de poulet"]);
+  assert.deepEqual(lines[0].nutriments, [0, 7, 0.2, 0.2]);           // fiche du produit
+  assert.deepEqual(lines[1].nutriments.map((v) => Math.round(v * 10) / 10), [1.4, 0.3, 0.2, 0]); // valeurs moyennes
+  assert.equal(lines[2].nutriments, null);                             // inconnus
+  const t = Core.totals(lines);
+  assert.equal(Math.round(t.nutriments[1] * 10) / 10, 7.3);
+  assert.equal(Math.round(t.nutrientCoverage * 100), 80);           // le poulet (115 kcal sur 585) n'est pas couvert
+  assert.deepEqual(Core.nutrientTargets({ kcal: 2400 }), [30, 100, 32, 6]);
+});

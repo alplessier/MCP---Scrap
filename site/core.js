@@ -38,7 +38,10 @@ const Core = (() => {
       return p;
     });
     const byEan = new Map(products.map((p) => [p.ean, p]));
-    const generic = Object.entries(data.generique).map(([k, m]) => ({ tokens: queryTokens(k), macros: m }));
+    // valeurs génériques : 4 macros, puis (si connus) fibres, sucres, acides gras saturés et sel
+    const generic = Object.entries(data.generique).map(([k, m]) => ({
+      tokens: queryTokens(k), macros: m.slice(0, 4), nutriments: m.length >= 8 ? m.slice(4, 8) : null,
+    }));
     return { maj: data.maj, magasin: data.magasin, products, byEan, generic };
   }
 
@@ -86,11 +89,11 @@ const Core = (() => {
   };
   const proteinPerEuro = (p) => (p.macros && p.prix_unite && p.unite !== "PIECE" ? (p.macros[1] * 10) / p.prix_unite : -1);
 
-  function genericMacros(cat, name) {
+  function genericEntry(cat, name) {
     const nameWords = words(name);
-    const hit = cat.generic.find((g) => g.tokens.every((t) => nameWords.some((w) => w.startsWith(t))));
-    return hit ? hit.macros : null;
+    return cat.generic.find((g) => g.tokens.every((t) => nameWords.some((w) => w.startsWith(t)))) || null;
   }
+  const genericMacros = (cat, name) => genericEntry(cat, name)?.macros || null;
 
   // ---------- Ingrédients ----------
 
@@ -187,7 +190,7 @@ const Core = (() => {
   }
 
   function costLine(cat, ing, p) {
-    const out = { ing, product: p, cost: null, used: null, packs: null, macros: null, generic: false };
+    const out = { ing, product: p, cost: null, used: null, packs: null, macros: null, nutriments: null, generic: false };
     if (p) {
       // quantité utilisée dans l'unité du prix (kg, L ou pièces)
       out.used = p.unite === "PIECE" ? ing.pieces : ing.grams != null ? ing.grams / 1000 : null;
@@ -202,6 +205,9 @@ const Core = (() => {
       out.generic = !!per100;
     }
     if (per100 && ing.grams != null) out.macros = per100.map((v) => (v * ing.grams) / 100);
+    // fibres, sucres, acides gras saturés, sel : ceux du produit, sinon les valeurs moyennes de l'aliment
+    const n100 = (p && p.macros && p.nutriments) || genericEntry(cat, ing.name)?.nutriments || null;
+    if (n100 && ing.grams != null) out.nutriments = n100.map((v) => (v == null ? null : (v * ing.grams) / 100));
     return out;
   }
 
@@ -224,14 +230,34 @@ const Core = (() => {
 
   function totals(results) {
     const macros = [0, 0, 0, 0];
-    let cost = 0;
+    const nutriments = [0, 0, 0, 0];
+    let cost = 0, kcalWithNutrients = 0;
     const missingPrice = [], missingMacros = [];
     for (const r of results) {
       if (r.error) continue;
       if (r.cost != null) cost += r.cost; else missingPrice.push(r.ing.raw);
       if (r.macros) r.macros.forEach((v, i) => (macros[i] += v)); else missingMacros.push(r.ing.raw);
+      if (r.nutriments) {
+        r.nutriments.forEach((v, i) => (nutriments[i] += v || 0));
+        if (r.macros) kcalWithNutrients += r.macros[0];
+      }
     }
-    return { cost, macros, missingPrice, missingMacros };
+    // part des calories dont on connaît les nutriments : en dessous, les totaux sont des minimums
+    const nutrientCoverage = macros[0] > 0 ? kcalWithNutrients / macros[0] : 0;
+    return { cost, macros, nutriments, nutrientCoverage, missingPrice, missingMacros };
+  }
+
+  // Repères journaliers (adulte) : fibres au moins 30 g (Anses) ; sucres totaux au plus 100 g (Anses, hors
+  // lactose et galactose) ; acides gras saturés au plus 12 % des calories (Anses) ; sel au plus 6 g (Anses).
+  const NUTRIENT_INFO = [
+    { key: "fibres", label: "Fibres", kind: "min" },
+    { key: "sucres", label: "Sucres", kind: "max" },
+    { key: "satures", label: "AG saturés", kind: "max" },
+    { key: "sel", label: "Sel", kind: "max" },
+  ];
+  function nutrientTargets(daily) {
+    if (!daily) return null;
+    return [30, 100, Math.round((daily.kcal * 0.12) / 9), 6];
   }
 
   // Un même produit sur plusieurs lignes ou recettes : on additionne avant de compter les paquets
@@ -514,7 +540,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
+    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 

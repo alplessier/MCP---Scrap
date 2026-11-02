@@ -25,7 +25,7 @@ USERSCRIPT_HEADER = """// ==UserScript==
 // ==/UserScript==
 """
 COLUMNS = ["ean", "nom", "marque", "prix", "prix_unite", "unite", "conditionnement", "rayon", "categorie",
-           "promo", "image", "url", "macros"]
+           "promo", "image", "url", "macros", "nutriments"]
 
 
 def build_site_data(data_dir: Path = DATA_DIR, site_dir: Path = SITE_DIR) -> Path:
@@ -36,13 +36,15 @@ def build_site_data(data_dir: Path = DATA_DIR, site_dir: Path = SITE_DIR) -> Pat
     for p in catalogue["produits"]:
         entry = nutrition.get(p["ean"])
         macros = entry["m"] if entry else None
-        rows.append([p.get(c) for c in COLUMNS[:-1]] + [macros])
+        nutriments = entry.get("n") if entry and macros else None
+        rows.append([p.get(c) for c in COLUMNS[:-2]] + [macros, nutriments])
     out = {
         "maj": catalogue["maj"],
         "magasin": catalogue["magasin"],
         "colonnes": COLUMNS,
         "produits": rows,
-        "generique": {k: list(m.as_tuple()) for k, m in GENERIC_PER_100G.items()},
+        # macros puis, s'ils sont connus, fibres, sucres, acides gras saturés et sel
+        "generique": {k: list(m.as_tuple()) + list(m.nutriments or []) for k, m in GENERIC_PER_100G.items()},
     }
     path = site_dir / "data" / "catalogue.json"
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,11 @@ on:
         description: "Rayons à relever, séparés par des espaces (vide = tous)"
         required: false
         default: ""
+      nutrition_seule:
+        description: "Compléter seulement les valeurs nutritionnelles (Open Food Facts), sans relever les prix ni utiliser Firecrawl"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: [main]
     paths: ["site/**", "recette_macros/site.py", "data/**"]
@@ -42,8 +47,11 @@ jobs:
         env:
           FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
           RAYONS: ${{ github.event.inputs.rayons }}
+          NUTRITION_SEULE: ${{ github.event.inputs.nutrition_seule }}
         run: |
-          if [ -n "$RAYONS" ]; then
+          if [ "$NUTRITION_SEULE" = "true" ]; then
+            python -m recette_macros.update --nutrition
+          elif [ -n "$RAYONS" ]; then
             # shellcheck disable=SC2086 # découpage voulu : un argument par rayon
             python -m recette_macros.update --rayons $RAYONS
           else

@@ -160,21 +160,31 @@ def test_update_catalogue_keeps_other_rayons_and_logs_price_changes(tmp_path, mo
 
 
 def test_update_nutrition_only_fetches_new_products(tmp_path, monkeypatch):
-    (tmp_path / "produits.json").write_text(json.dumps({"produits": [{"ean": e} for e in ("a", "b", "c", "d")]}))
+    (tmp_path / "produits.json").write_text(json.dumps({"produits": [{"ean": e} for e in ("a", "b", "c", "d", "e")]}))
     old = (date.today() - timedelta(days=60)).isoformat()
     recent = date.today().isoformat()
     (tmp_path / "nutrition.json").write_text(json.dumps({
-        "a": {"m": [100, 10, 10, 1], "vu": old},  # connu : jamais réinterrogé
+        "a": {"m": [100, 10, 10, 1], "n": [1, 2, 3, 0.5], "vu": old},  # connu : jamais réinterrogé
         "b": {"m": None, "vu": recent},          # sans fiche, vérifié récemment : on attend
         "c": {"m": None, "vu": old},             # sans fiche depuis longtemps : on retente
+        "e": {"m": [50, 5, 5, 1], "vu": old},    # connu d'avant les nutriments : à compléter, en dernier
     }))
     asked = []
-    monkeypatch.setattr(nut, "fetch_batch", lambda eans, fc: asked.extend(eans) or {e: Macros(1, 2, 3, 4) for e in eans})
+    monkeypatch.setattr(nut, "fetch_batch", lambda eans, fc: asked.extend(eans) or {e: Macros(1, 2, 3, 4, [5, 6, 7, 0.8]) for e in eans})
     monkeypatch.setattr(nut, "SEARCH_DELAY", 0)
     nut.update_nutrition(tmp_path, log=lambda *_: None)
-    assert sorted(asked) == ["c", "d"]
+    assert asked == ["c", "d", "e"]
     known = json.loads((tmp_path / "nutrition.json").read_text())
     assert known["a"]["m"] == [100, 10, 10, 1] and known["d"]["m"] == [1, 2, 3, 4]
+    assert known["d"]["n"] == [5, 6, 7, 0.8] and known["e"]["n"] == [5, 6, 7, 0.8]
+
+
+def test_nutrients_from_off():
+    m = nut.macros_from_nutriments({"energy-kcal_100g": 120, "proteins_100g": 10, "fiber_100g": 3.456,
+                                    "sugars_100g": "4", "saturated-fat_100g": "", "salt_100g": 0.3})
+    assert m.nutriments == [3.46, 4.0, None, 0.3]
+    assert nut.macros_from_nutriments({"proteins_100g": 10}).nutriments is None
+    assert set(nut.GENERIC_NUTRIENTS) == set(nut.GENERIC_PER_100G)  # chaque aliment générique a ses nutriments
 
 
 def test_macros_recomputes_missing_kcal():
