@@ -457,3 +457,30 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em;
   .detail .rec-steps { order: 5; }
   .detail .rec-edit { order: 6; }
 }
+
+/* ---------- Favoris ---------- */
+.fav {
+  position: absolute; top: 58px; right: 10px; width: 40px; height: 40px; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--surface); color: var(--brand); font-size: 1.3rem; line-height: 1; display: grid; place-items: center;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%); z-index: 2;
+}
+.fav[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
+.btn.fav-btn[aria-pressed="true"] { color: var(--brand); }
+
+/* ---------- Suggestions sous la recherche ---------- */
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 2px 0 4px; }
+.suggestions .muted { font-size: 0.85rem; font-weight: 700; margin-right: 2px; }
+.chip.small { font-size: 0.8rem; padding: 4px 11px; }
+.chip.fridge-link { text-decoration: none; color: var(--ink); background: var(--brand-soft); border-color: transparent; margin-left: auto; }
+@media (max-width: 620px) { .chip.fridge-link { margin-left: 0; } }
+
+/* ---------- Avec ce que j'ai ---------- */
+.fridge-panel .search { width: 100%; }
+.fridge-meta { font-size: 0.78rem; }
+.fridge-meta .ok { color: var(--ok); }
+
+/* ---------- Volets repliables ---------- */
+details.fold { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 6px; }
+details.fold > summary { cursor: pointer; font-weight: 800; padding: 6px 0; list-style-position: inside; }
+details.fold > summary small { font-weight: 700; }
+.rec-head details.fold { border: 0; margin: 0 0 8px; padding: 0; }

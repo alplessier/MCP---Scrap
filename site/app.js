@@ -23,11 +23,12 @@ const AVATARS = ["🙂", "😎", "🧔", "👩", "👨", "🧒", "👧", "👦",
 const state = loadState();
 let cat = null;
 let book = { tags: {}, recettes: [], byId: new Map() };
-const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false };
+const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false, folds: {} };
 
 function loadState() {
   const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null,
-    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true };
+    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true,
+    favs: [], fridge: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
     if (saved) {
@@ -205,11 +206,16 @@ function tileHtml(r, cls = "") {
   return `<div class="tile ${cls}" style="background:${esc(r.couleur)}" aria-hidden="true">${esc(r.emoji)}</div>`;
 }
 
-function cardHtml(r, meal, rank = null) {
+const isFav = (r) => state.favs.includes(r.id);
+const favButton = (r, cls = "fav") => `<button type="button" class="${cls}" data-action="toggle-fav" data-id="${esc(r.id)}" aria-pressed="${isFav(r)}"
+  aria-label="${isFav(r) ? "Retirer des favoris" : "Ajouter aux favoris"} : ${esc(r.nom)}">${isFav(r) ? "♥" : "♡"}${cls === "fav" ? "" : " Favori"}</button>`;
+
+function cardHtml(r, meal, rank = null, extra = "") {
   const s = stats(r);
   const inMenu = !!state.menu[r.id];
   const sc = scoreOf(r);
   return `<article class="card">
+    ${favButton(r)}
     ${rank != null && rank < 3 ? `<span class="medal" aria-label="Numéro ${rank + 1} pour vous">${MEDALS[rank]}</span>` : ""}
     <button class="add" data-action="toggle-menu" data-id="${esc(r.id)}" aria-pressed="${inMenu}"
       aria-label="${inMenu ? "Retirer du menu" : "Ajouter au menu"} : ${esc(r.nom)}">${inMenu ? "✓" : "+"}</button>
@@ -224,6 +230,7 @@ function cardHtml(r, meal, rank = null) {
         <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span></div>
         <div class="card-meta">${sc ? `<span class="score" title="Pertinence pour votre objectif">🎯 ${sc.score}/100</span>` : ""}${fitLabel(r, s.macros[0], meal)}</div>
         ${sc && sc.flags.length ? `<div class="card-meta flags">${sc.flags.map((f) => `<span>${FLAG_LABELS[f]}</span>`).join("")}</div>` : ""}
+        ${extra}
       </div>
     </a>
   </article>`;
@@ -287,17 +294,23 @@ function viewRecipes() {
   const compatible = allRecipes().filter((r) => compatOf(r).ok);
   const hidden = allRecipes().length - compatible.length;
   const list = (ui.showAll ? allRecipes() : compatible).filter((r) => {
-    if (ui.tag && !(r.tags || []).includes(ui.tag)) return false;
+    if (ui.tag === "favoris") { if (!isFav(r)) return false; }
+    else if (ui.tag && !(r.tags || []).includes(ui.tag)) return false;
     if (!q.length) return true;
     const w = C.words(`${r.nom} ${r.ingredients.join(" ")} ${(r.tags || []).map((t) => book.tags[t] || t).join(" ")}`);
     return q.every((t) => w.some((x) => x.startsWith(t)));
   });
-  const tags = Object.entries({ ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
+  const tags = Object.entries({ ...(state.favs.length ? { favoris: "♥ Favoris" } : {}), ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
   if (daily) {
     // mêmes règles que les rangées « top 3 » : dans un filtre de repas, les plats passent avant les collations
-    list.sort((a, b) => (ui.tag ? eligibleForTop(b, ui.tag) - eligibleForTop(a, ui.tag) : 0) || byScore(a, b));
+    list.sort((a, b) => (ui.tag && ui.tag !== "favoris" ? eligibleForTop(b, ui.tag) - eligibleForTop(a, ui.tag) : 0) || byScore(a, b));
   }
   const showTops = daily && !ui.tag && !q.length;
+  const favs = allRecipes().filter(isFav);
+  const favRow = !ui.tag && !q.length && favs.length ? `<div class="top-row">
+      <div class="top-head"><h3>♥ Vos favoris</h3><button class="link-btn" data-action="tag" data-tag="favoris">Tout voir →</button></div>
+      <div class="top-cards">${favs.slice(0, 6).map((r) => cardHtml(r, meal)).join("")}</div>
+    </div>` : "";
   const tops = showTops ? TOP_FILTERS.map((t) => {
     const best = compatible.filter((r) => (r.tags || []).includes(t) && eligibleForTop(r, t)).sort(byScore).slice(0, 3);
     if (!best.length) return "";
@@ -320,11 +333,16 @@ function viewRecipes() {
     <div class="toolbar">
       <label class="sr-only" for="recipe-search">Rechercher une recette</label>
       <input id="recipe-search" class="search" type="search" placeholder="Poulet, pâtes, petit-déj…" value="${esc(ui.query)}" autocomplete="off">
+      <div class="suggestions">
+        ${ui.query ? "" : `<span class="muted">Suggestions</span>${searchSuggestions().map((x) => `<button class="chip small" data-action="suggest" data-q="${esc(x)}">${esc(x)}</button>`).join("")}`}
+        <a class="chip small fridge-link" href="#/frigo">🧊 Avec ce que j'ai${state.fridge.length ? ` (${state.fridge.length})` : ""}</a>
+      </div>
       <div class="chips" role="group" aria-label="Filtrer">
         <button class="chip" data-action="tag" data-tag="" aria-pressed="${!ui.tag}">Toutes</button>
         ${tags.map(([k, v]) => `<button class="chip" data-action="tag" data-tag="${esc(k)}" aria-pressed="${ui.tag === k}">${esc(v)}</button>`).join("")}
       </div>
     </div>
+    ${favRow && !showTops ? `<section class="for-you">${favRow}</section>` : ""}
     ${showTops ? `<section class="for-you" aria-labelledby="for-you-title">
       <div class="for-you-head">
         <h2 id="for-you-title">Le top 3 pour ${present().length > 1 ? "" : "vous"}</h2>
@@ -332,10 +350,10 @@ function viewRecipes() {
           `<option value="${esc(x.id)}"${x.id === m.id ? " selected" : ""}>${esc(x.emoji)} ${esc(x.nom)}</option>`).join("")}</select>` : ""}
       </div>
       <p class="muted">Classé pour l'objectif « ${esc(C.GOALS[m.objectif]?.label || "")} » de ${esc(m.nom)} : protéines, portion adaptée au repas idéal, lipides et prix${prefs().budget || prefs().temps ? ", budget et temps" : ""}. Seules les recettes compatibles avec tout le foyer sont proposées. <a href="#/profil">Modifier le foyer</a></p>
-      ${tops}
+      ${favRow}${tops}
     </section><h2 class="all-title">Toutes les recettes</h2>` : ""}
     <div class="grid">
-      ${list.map((r, i) => cardHtml(r, meal, daily && ui.tag && !q.length && eligibleForTop(r, ui.tag) ? i : null)).join("")}
+      ${list.map((r, i) => cardHtml(r, meal, daily && ui.tag && ui.tag !== "favoris" && !q.length && eligibleForTop(r, ui.tag) ? i : null)).join("")}
       <a class="card create" href="#/creer">
         <div class="tile" aria-hidden="true">✍️</div>
         <div class="card-body"><div class="card-title">Créer ma recette</div><div class="card-meta"><span>Mode libre : vos ingrédients, chiffrés au Drive</span></div></div>
@@ -345,6 +363,61 @@ function viewRecipes() {
     ${hidden ? `<p class="muted hidden-note">${ui.showAll ? `Les ${hidden} recettes incompatibles avec votre foyer sont affichées (signalées par ⚠️).`
       : `${hidden} recette${hidden > 1 ? "s masquées" : " masquée"} : incompatible${hidden > 1 ? "s" : ""} avec les allergies, régimes, ingrédients détestés ou le matériel de votre foyer.`}
       <button class="link-btn" data-action="show-all">${ui.showAll ? "Les masquer" : "Les afficher"}</button></p>` : ""}`;
+}
+
+// Suggestions sous la recherche : des ingrédients clés pour le sport, gardés s'ils donnent au moins 3 recettes
+const SUGGESTIONS = ["poulet", "skyr", "oeufs", "saumon", "thon", "boeuf", "dinde", "riz", "pâtes", "avoine", "patate douce", "tofu", "lentilles", "wrap", "fromage blanc"];
+let suggestionCache = null;
+function searchSuggestions() {
+  if (!suggestionCache) {
+    const texts = book.recettes.map((r) => C.words(`${r.nom} ${r.ingredients.join(" ")}`));
+    suggestionCache = SUGGESTIONS.filter((x) => {
+      const q = C.queryTokens(x);
+      return texts.filter((w) => q.every((t) => w.some((y) => y.startsWith(t)))).length >= 3;
+    }).slice(0, 8);
+  }
+  return suggestionCache;
+}
+
+const FRIDGE_QUICK = ["oeufs", "poulet", "riz", "pâtes", "thon", "skyr", "fromage blanc", "avoine", "banane", "tomates", "courgette", "pommes de terre"];
+
+function viewFridge() {
+  const items = state.fridge;
+  const results = items.length ? allRecipes().filter((r) => compatOf(r).ok)
+    .map((r) => ({ r, m: C.fridgeMatch(r.ingredients, items) }))
+    .filter((x) => x.m.have.length)
+    .sort((a, b) => a.m.missing.length - b.m.missing.length || b.m.ratio - a.m.ratio || byScore(a.r, b.r)) : [];
+  const { meal } = targets();
+  const complete = results.filter((x) => !x.m.missing.length).length;
+  return `<a class="back" href="#/">← Recettes</a>
+    <div class="page-head"><h1>Avec ce que j'ai</h1></div>
+    <p class="muted">Dites-nous ce qu'il y a dans votre frigo et vos placards : les recettes qui en utilisent le plus passent en premier. Huile, sel et épices sont supposés déjà là.</p>
+    <div class="panel fridge-panel">
+      <input id="fridge-input" class="search" type="search" list="fridge-options" data-action="fridge-input" placeholder="Ajoutez un ingrédient : poulet, œufs, riz…" autocomplete="off">
+      <datalist id="fridge-options">${dislikeOptions().map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      ${items.length ? `<div class="chips-select" style="margin-top:12px">${items.map((x) =>
+        `<button type="button" class="chip removable" data-action="fridge-remove" data-value="${esc(x)}" aria-label="Retirer ${esc(x)}">${esc(x)} ✕</button>`).join("")}
+        <button type="button" class="link-btn" data-action="fridge-clear">Tout effacer</button></div>` : ""}
+      <div class="chips-select quick" style="margin-top:12px">${FRIDGE_QUICK.filter((x) => !items.includes(x)).map((x) =>
+        `<button type="button" class="chip small" data-action="fridge-add" data-value="${esc(x)}">+ ${esc(x)}</button>`).join("")}</div>
+    </div>
+    ${items.length ? `<p class="muted">${results.length ? `${results.length} recette${results.length > 1 ? "s" : ""} compatible${results.length > 1 ? "s" : ""} avec votre foyer${complete ? `, dont ${complete} sans rien acheter` : ""}.` : "Aucune recette n'utilise ces ingrédients."}</p>
+      <div class="grid">${results.slice(0, 36).map(({ r, m }) => cardHtml(r, meal, null,
+        `<div class="card-meta fridge-meta"><span class="ok">✓ ${m.have.length}/${m.have.length + m.missing.length}</span>${m.missing.length ? `<span>il manque : ${esc(m.missing.join(", "))}</span>` : `<span class="ok">rien à acheter</span>`}</div>`)).join("")}</div>`
+    : `<div class="empty"><div class="big-emoji">🧊</div><p>Ajoutez au moins un ingrédient.</p></div>`}`;
+}
+
+function addFridge(value) {
+  const v = (value || "").trim().toLowerCase();
+  if (!v || state.fridge.includes(v)) return;
+  state.fridge = [...state.fridge, v];
+  save();
+}
+
+// Volets repliables de la fiche : ouverts par défaut sur ordinateur, fermés sur mobile ; on retient le choix
+function foldOpen(key, desktopDefault = true) {
+  if (key in ui.folds) return ui.folds[key];
+  return desktopDefault && window.matchMedia("(min-width: 861px)").matches;
 }
 
 function viewRecipe(id) {
@@ -379,7 +452,7 @@ function viewRecipe(id) {
             <div class="chips-select">${pantry.map((x) => pantryChip({ key: pantryKey(x), name: `${x.ing.name} (${C.quantityLabel(x.ing)})`, optional: x.ing.optional, buy: !skippedInCart(x) })).join("")}</div>
             <p class="hint">Comptés dans les macros, mais pas ajoutés au panier. Touchez-en un s'il vous manque.</p></div>` : ""}
           <p class="hint">Quantités pour ${s.sizes.length ? "les personnes choisies, chacune selon son objectif" : `${portionsLabel(s.p)}`}.</p>
-          <details class="drive-products"><summary>🛒 Produits du Drive et prix (${res.lines.filter((x) => x.product).length})</summary>
+          <details class="drive-products fold" data-fold="drive"${foldOpen("drive", false) ? " open" : ""}><summary>🛒 Produits du Drive et prix (${res.lines.filter((x) => x.product).length})</summary>
             ${ingredientsHtml(res.lines)}
             <p class="hint">Produits et prix du ${esc(cat.magasin.nom)} ; changez de produit dans la liste si besoin.</p>
           </details>
@@ -400,8 +473,13 @@ function viewRecipe(id) {
         <h1>${esc(r.nom)}</h1>
         <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(res.cost)} au total · ${euro(res.cost / s.p)} par personne</p>
         ${compat.ok ? "" : `<div class="warning" role="note">⚠️ Pas adaptée à votre foyer : ${esc(compat.reasons.join(", "))}.</div>`}
-        <p class="traits">${traits.allergens.length ? `<span>Contient : ${esc(traits.allergens.map((a) => C.ALLERGENS[a].label.toLowerCase()).join(", "))}</span>` : `<span>Sans allergène majeur détecté</span>`}
-          ${traits.equipment.length ? `<span>Matériel : ${esc(traits.equipment.map((e) => C.EQUIPMENT[e].label.toLowerCase()).join(", "))}</span>` : `<span>Sans cuisson</span>`}</p>
+        <details class="fold" data-fold="infos"${foldOpen("infos", false) ? " open" : ""}>
+          <summary>ℹ️ Allergènes et matériel <small class="muted">· ${traits.allergens.length ? `${traits.allergens.length} allergène${traits.allergens.length > 1 ? "s" : ""}` : "sans allergène majeur"}</small></summary>
+          <p class="traits">${traits.allergens.length ? `<span>Contient : ${esc(traits.allergens.map((a) => C.ALLERGENS[a].label.toLowerCase()).join(", "))}</span>` : `<span>Sans allergène majeur détecté</span>`}
+            ${traits.equipment.length ? `<span>Matériel : ${esc(traits.equipment.map((e) => C.EQUIPMENT[e].label.toLowerCase()).join(", "))}</span>` : `<span>Sans cuisson</span>`}
+            <span>${traits.vegetal ? "Végétalien" : traits.meat ? (traits.pork ? "Contient de la viande (porc)" : "Contient de la viande") : traits.fish ? "Pescétarien" : "Végétarien"}</span></p>
+          <p class="hint">Détection d'après les noms des ingrédients : vérifiez toujours les étiquettes.</p>
+        </details>
         <div class="band" role="list">
           <div role="listitem"><span aria-hidden="true">⏱</span><b>${r.temps ? `${r.temps} min` : "—"}</b><small>en tout</small></div>
           <div role="listitem"><span aria-hidden="true">🔥</span><b>${num(perPerson[0])} kcal</b><small>par personne${s.sizes.length > 1 || s.guests ? " (moy.)" : ""}</small></div>
@@ -411,6 +489,7 @@ function viewRecipe(id) {
         <div class="actions top-actions">
           <button class="btn primary" data-action="toggle-menu" data-id="${esc(r.id)}">${inMenu ? "✓ Dans mon menu" : "+ Ajouter au menu"}</button>
           <button class="btn" data-action="send-recipe" data-id="${esc(r.id)}">🛒 Panier Carrefour</button>
+          ${favButton(r, "btn fav-btn")}
         </div>
         </div>
         <div class="panel rec-who">
@@ -429,6 +508,8 @@ function viewRecipe(id) {
             <div class="kpi"><b>${num(res.macros[0])}</b><span>kcal au total</span></div>
             <div class="kpi"><b>${euro(res.cost)}</b><span>pour le repas</span></div>
           </div>
+          <details class="fold" data-fold="apports"${foldOpen("apports") ? " open" : ""}>
+          <summary>📊 Apports de chacun <small class="muted">· protéines, glucides, lipides</small></summary>
           ${s.sizes.map((x) => {
             const m = memberById(x.id);
             const mac = unit.macros.map((v) => v * x.size);
@@ -443,6 +524,7 @@ function viewRecipe(id) {
               <div class="mi-head"><span><b>${s.sizes.length ? `${s.guests} invité${s.guests > 1 ? "s" : ""}` : "Par portion"}</b></span><span>${num(unit.macros[0])} kcal · ${euro(unit.cost)} chacun</span></div>
               ${macroBars(unit.macros, null)}
             </div>` : ""}
+          </details>
           ${light.length ? `<p class="hint">Même doublée, cette recette reste légère pour ${esc(light.map((x) => x.nom).join(", "))} : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
           ${res.missingMacros.length ? `<p class="hint">Macros inconnues pour : ${esc(res.missingMacros.join(", "))}.</p>` : ""}
         </div>
@@ -947,6 +1029,7 @@ const ROUTES = [
   [/^#\/profil\/(.+)$/, (m) => viewMember(decodeURIComponent(m[1])), "profil"],
   [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "creer"],
   [/^#\/produits$/, () => viewProducts(), "recettes"],
+  [/^#\/frigo$/, () => viewFridge(), "recettes"],
 ];
 
 // En cuisine, l'écran reste allumé (comme « Désactiver la veille » chez Jow), si le navigateur le permet
@@ -1195,6 +1278,24 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "save-draft": saveDraft(); break;
+    case "toggle-fav": {
+      e.preventDefault();
+      const r = recipeById(id);
+      state.favs = isFav(r) ? state.favs.filter((x) => x !== id) : [id, ...state.favs];
+      save();
+      toast(isFav(r) ? `♥ Ajouté aux favoris : ${r.nom}` : `Retiré des favoris : ${r.nom}`);
+      if (ui.tag === "favoris" && !state.favs.length) ui.tag = null;
+      render({ keepScroll: true });
+      break;
+    }
+    case "suggest":
+      ui.query = el.dataset.q;
+      render({ keepScroll: true });
+      $("#recipe-search")?.focus();
+      break;
+    case "fridge-add": addFridge(el.dataset.value); render({ keepScroll: true }); break;
+    case "fridge-remove": state.fridge = state.fridge.filter((x) => x !== el.dataset.value); save(); render({ keepScroll: true }); break;
+    case "fridge-clear": state.fridge = []; save(); render({ keepScroll: true }); break;
     case "pantry-buy": {
       const set = new Set(state.pantryBuy);
       if (set.has(el.dataset.key)) set.delete(el.dataset.key); else set.add(el.dataset.key);
@@ -1266,6 +1367,11 @@ document.addEventListener("change", (e) => {
     render({ keepScroll: true });
   } else if (el.dataset.action === "ing-qty") {
     render({ keepScroll: true });
+  } else if (el.dataset.action === "fridge-input") {
+    // choix dans la liste déroulante ou validation au clavier
+    addFridge(el.value);
+    render({ keepScroll: true });
+    $("#fridge-input")?.focus();
   } else if (el.dataset.action === "keep-awake") {
     state.keepAwake = el.checked;
     save();
@@ -1322,6 +1428,12 @@ $("#bookmarklet").addEventListener("click", (e) => {
   e.preventDefault();
   toast("Glissez ce bouton dans la barre de favoris.");
 });
+
+// mémorise l'ouverture des volets repliables de la fiche (l'événement « toggle » ne remonte pas : on écoute en capture)
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (d.dataset && d.dataset.fold) ui.folds[d.dataset.fold] = d.open;
+}, true);
 
 window.addEventListener("hashchange", () => {
   render();
