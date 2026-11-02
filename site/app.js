@@ -27,7 +27,7 @@ const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false, folds:
 
 function loadState() {
   const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null, group: null,
-    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true,
+    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true, formatKeep: [],
     favs: [], fridge: [], plan: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
@@ -840,8 +840,11 @@ function menuShopping() {
     const k = pantryKey(x);
     if (!pantry.has(k)) pantry.set(k, { key: k, name: x.ing.name, optional: x.ing.optional, buy: !skippedInCart(x) });
   }
-  return { entries, pantry: [...pantry.values()], list: C.shoppingList(cartLines(lines), { exclude: new Set(state.owned) }) };
+  return { entries, pantry: [...pantry.values()], list: shopping(cartLines(lines)) };
 }
+
+// Liste de courses : produits additionnés sur tout le menu, puis formats optimisés (sauf ceux qu'on garde)
+const shopping = (lines) => C.shoppingList(lines, { exclude: new Set(state.owned), cat, keep: new Set(state.formatKeep) });
 
 function pantryChip(item) {
   return `<button type="button" class="chip pantry-chip" data-action="pantry-buy" data-key="${esc(item.key)}" aria-pressed="${item.buy}"
@@ -863,6 +866,7 @@ function viewCourses() {
   }
   const toBuy = list.filter((e) => !e.owned);
   const total = toBuy.reduce((s, e) => s + e.price, 0);
+  const saved = list.reduce((s, e) => s + (e.optimized ? e.optimized.saving : 0), 0);
   return `<div class="page-head"><h1>Courses</h1><span class="muted">${entries.length} repas et recettes · ${list.length} produits</span></div>
     <div class="two-cols">
       <div>
@@ -874,13 +878,17 @@ function viewCourses() {
           <label class="shop-item${e.owned ? " owned" : ""}">
             <input type="checkbox" data-action="owned" data-ean="${esc(e.product.ean)}" ${e.owned ? "checked" : ""} aria-label="J'ai déjà : ${esc(e.product.nom)}">
             ${e.product.image ? `<img src="${esc(e.product.image)}" alt="" loading="lazy" width="44" height="44">` : `<span class="ph" aria-hidden="true">🛍️</span>`}
-            <span><span class="name">${esc(e.product.nom)}</span><br><span class="sub">${e.packs} × ${esc(e.product.conditionnement || "paquet")} · pour ${esc(e.uses.join(", "))}</span></span>
+            <span><span class="name">${esc(e.product.nom)}</span><br><span class="sub">${e.packs} × ${esc(e.product.conditionnement || "paquet")} · pour ${esc([...new Set(e.uses)].join(", "))}</span>
+              ${e.optimized && !e.optimized.part ? `<br><span class="format-note">💡 Format optimisé au lieu de ${esc(e.optimized.before)} · −${euro(e.optimized.saving)}
+                <button type="button" class="link-btn" data-action="format-keep" data-key="${esc(e.optimized.key)}">Garder mon format</button></span>` : ""}</span>
             <span class="price">${euro(e.price)}</span>
           </label>`).join("")}</div>`).join("")}
       </div>
       <aside class="panel sticky checkout">
         <h2>Mon panier</h2>
         <div class="total-line big"><span>${toBuy.length} produit${toBuy.length > 1 ? "s" : ""}</span><span>${euro(total)}</span></div>
+        ${saved > 0.005 ? `<div class="total-line saved"><span>💡 Économie sur les formats</span><span>−${euro(saved)}</span></div>` : ""}
+        ${state.formatKeep.length ? `<button type="button" class="link-btn" data-action="format-reset">Réoptimiser tous les formats</button>` : ""}
         <p class="hint">Paquets entiers, aux prix du relevé du ${new Date(cat.maj).toLocaleDateString("fr-FR")}. Les promotions fidélité ne sont pas déduites.</p>
         <button class="btn primary block" data-action="send-menu" ${toBuy.length ? "" : "disabled"} style="margin-top:12px">🛒 Envoyer au panier Carrefour</button>
         <button class="btn block" data-action="guide-menu" ${toBuy.length ? "" : "disabled"} style="margin-top:8px">📋 Liste guidée, sans installation</button>
@@ -1636,7 +1644,7 @@ document.addEventListener("click", (e) => {
     case "show-all": ui.showAll = !ui.showAll; render({ keepScroll: true }); break;
     case "send-recipe": {
       const r = recipeById(id);
-      sendToCart(r.nom, C.shoppingList(cartLines(compute(r).lines), { exclude: new Set(state.owned) }));
+      sendToCart(r.nom, shopping(cartLines(compute(r).lines)));
       break;
     }
     case "guide-menu": {
@@ -1651,6 +1659,13 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "save-draft": saveDraft(); break;
+    case "format-keep":
+      e.preventDefault();
+      state.formatKeep = [...new Set([...state.formatKeep, el.dataset.key])];
+      save();
+      render({ keepScroll: true });
+      break;
+    case "format-reset": state.formatKeep = []; save(); render({ keepScroll: true }); break;
     case "toggle-fav": {
       e.preventDefault();
       const r = recipeById(id);

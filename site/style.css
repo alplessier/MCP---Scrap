@@ -559,3 +559,7 @@ details.fold > summary small { font-weight: 700; }
 .nutrient.over .bar.n i { background: var(--l); }
 .nutrient.over small { color: var(--l); }
 .nutrients .hint { margin: 2px 0 0; }
+
+/* ---------- Formats optimisés ---------- */
+.format-note { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 4px; font-size: 0.8rem; font-weight: 700; color: var(--ok); }
+.total-line.saved { color: var(--ok); font-weight: 800; }
