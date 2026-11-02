@@ -506,3 +506,11 @@ details.fold > summary small { font-weight: 700; }
 .progress i { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width 0.3s; }
 .dialog .option summary { cursor: pointer; font-weight: 800; }
 .dialog .option .btn { margin-top: 6px; }
+
+/* ---------- Pour qui, sur l'accueil ---------- */
+.group-picker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.group-picker > .muted { font-weight: 800; }
+.who-chip.small { padding: 3px 12px 3px 3px; }
+.who-chip.small .avatar { width: 30px; height: 30px; font-size: 1.05rem; }
+.who-chip.small b { font-size: 0.88rem; }
+.group-label { font-weight: 800; font-size: 0.85rem; color: var(--brand); background: var(--brand-soft); border-radius: 999px; padding: 4px 12px; }
