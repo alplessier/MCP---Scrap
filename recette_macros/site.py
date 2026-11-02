@@ -1,6 +1,8 @@
 """Construit site/data/catalogue.json : le catalogue et les macros réunis, sous forme compacte pour le navigateur."""
 
 import json
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,5 +64,22 @@ def build_userscript(site_dir: Path = SITE_DIR) -> Path:
     return path
 
 
+ASSET_RE = re.compile(r'((?:href|src)="(?:style\.css|core\.js|app\.js))(?:\?v=[^"]*)?"')
+
+
+def stamp_assets(site_dir: Path = SITE_DIR, version: str | None = None) -> str:
+    """Ajoute ?v=<version> aux fichiers du site dans index.html.
+
+    Chaque mise en ligne change l'adresse de style.css, core.js et app.js : le navigateur ne peut pas
+    garder une ancienne version en cache à côté de la nouvelle page.
+    """
+    version = version or os.environ.get("GITHUB_SHA", "")[:10] or datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    path = site_dir / "index.html"
+    html = path.read_text(encoding="utf-8")
+    path.write_text(ASSET_RE.sub(lambda m: f'{m.group(1)}?v={version}"', html), encoding="utf-8")
+    return version
+
+
 if __name__ == "__main__":
     print(build_site_data())
+    print("version des fichiers :", stamp_assets())

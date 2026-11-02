@@ -1159,6 +1159,35 @@ const SETUP_STEPS = {
       <li>Revenez ici et rechargez la page.</li></ol>`,
 };
 
+// Fenêtre d'envoi, construite ici plutôt que dans index.html : une page HTML restée en cache
+// ne peut plus être en décalage avec ce script.
+const CART_DIALOG_HTML = `
+<form method="dialog">
+    <h2 id="cart-dialog-title">Envoyer au panier Carrefour</h2>
+    <p>Deux façons de faire. Le panier est celui de votre compte : il apparaît aussi dans l'<strong>application Carrefour</strong>.</p>
+    <div class="option">
+      <h3>📋 Liste guidée — sans rien installer</h3>
+      <p class="muted">Chaque produit s'ouvre sur carrefour.fr (ou dans l'application sur mobile) : vous l'ajoutez d'un geste et le cochez.</p>
+      <button class="btn primary" value="guide" type="submit">Ouvrir la liste guidée</button>
+    </div>
+    <div class="option">
+      <h3>⚡ Tout ajouter en un clic — à installer une seule fois</h3>
+      <div id="cart-setup-steps"></div>
+      <p class="muted">Une fois installé, le site le détecte : le bouton ouvre directement Carrefour et remplit le panier, sans cette fenêtre.</p>
+      <button class="btn" value="reload" type="submit">🔄 C'est installé : recharger la page</button>
+    </div>
+    <details class="option desktop-only">
+      <summary>Autre option sur ordinateur : un favori, sans extension</summary>
+      <p>Glissez ce bouton dans votre barre de favoris :
+        <a id="bookmarklet" class="bookmarklet" href="#" title="Glissez-moi dans la barre de favoris">🛒 Panier recette</a></p>
+      <p class="muted">Après chaque envoi, cliquez sur ce favori une fois la page Carrefour ouverte.</p>
+      <button class="btn small" value="send" type="submit">Ouvrir Carrefour</button>
+    </details>
+    <div class="actions">
+      <button class="btn ghost" value="cancel" type="submit">Annuler</button>
+    </div>
+  </form>`;
+
 // Garde la dernière liste envoyée, pour la liste guidée
 function rememberCart(nom, list) {
   const items = list.filter((e) => !e.owned && e.packs).map((e) => [e.product.ean, e.packs]);
@@ -1176,7 +1205,14 @@ function sendToCart(nom, list) {
     window.open(url, "_blank", "noopener");
     return;
   }
-  const dialog = $("#cart-dialog");
+  let dialog = $("#cart-dialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "cart-dialog";
+    dialog.className = "dialog";
+    document.body.append(dialog);
+  }
+  dialog.innerHTML = CART_DIALOG_HTML;
   $("#cart-setup-steps").innerHTML = SETUP_STEPS[device()];
   dialog.querySelector(".desktop-only").hidden = device() !== "desktop";
   if (device() === "desktop") prepareBookmarklet();
@@ -1304,6 +1340,10 @@ function saveDraft() {
 }
 
 document.addEventListener("click", (e) => {
+  if (e.target.closest("#bookmarklet")) {
+    e.preventDefault();
+    return toast("Glissez ce bouton dans la barre de favoris.");
+  }
   const el = e.target.closest("[data-action]");
   if (!el || ["SELECT", "INPUT", "TEXTAREA"].includes(el.tagName)) return;
   const { action, id } = el.dataset;
@@ -1527,10 +1567,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") { ui.cookStep = Math.max(0, ui.cookStep - 1); render(); }
 });
 
-$("#bookmarklet").addEventListener("click", (e) => {
-  e.preventDefault();
-  toast("Glissez ce bouton dans la barre de favoris.");
-});
 
 // mémorise l'ouverture des volets repliables de la fiche (l'événement « toggle » ne remonte pas : on écoute en capture)
 document.addEventListener("toggle", (e) => {

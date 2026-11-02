@@ -34,33 +34,8 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <dialog id="cart-dialog" class="dialog" aria-labelledby="cart-dialog-title">
-    <form method="dialog">
-      <h2 id="cart-dialog-title">Envoyer au panier Carrefour</h2>
-      <p>Deux façons de faire. Le panier est celui de votre compte : il apparaît aussi dans l'<strong>application Carrefour</strong>.</p>
-      <div class="option">
-        <h3>📋 Liste guidée — sans rien installer</h3>
-        <p class="muted">Chaque produit s'ouvre sur carrefour.fr (ou dans l'application sur mobile) : vous l'ajoutez d'un geste et le cochez.</p>
-        <button class="btn primary" value="guide" type="submit">Ouvrir la liste guidée</button>
-      </div>
-      <div class="option">
-        <h3>⚡ Tout ajouter en un clic — à installer une seule fois</h3>
-        <div id="cart-setup-steps"></div>
-        <p class="muted">Une fois installé, le site le détecte : le bouton ouvre directement Carrefour et remplit le panier, sans cette fenêtre.</p>
-        <button class="btn" value="reload" type="submit">🔄 C'est installé : recharger la page</button>
-      </div>
-      <details class="option desktop-only">
-        <summary>Autre option sur ordinateur : un favori, sans extension</summary>
-        <p>Glissez ce bouton dans votre barre de favoris :
-          <a id="bookmarklet" class="bookmarklet" href="#" title="Glissez-moi dans la barre de favoris">🛒 Panier recette</a></p>
-        <p class="muted">Après chaque envoi, cliquez sur ce favori une fois la page Carrefour ouverte.</p>
-        <button class="btn small" value="send" type="submit">Ouvrir Carrefour</button>
-      </details>
-      <div class="actions">
-        <button class="btn ghost" value="cancel" type="submit">Annuler</button>
-      </div>
-    </form>
-  </dialog>
+  <!-- rempli par app.js à l'ouverture : le contenu suit toujours la version du script -->
+  <dialog id="cart-dialog" class="dialog" aria-labelledby="cart-dialog-title"></dialog>
 
   <script src="core.js"></script>
   <script src="app.js"></script>

@@ -226,3 +226,15 @@ def test_site_javascript():
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run([node, "--test", str(root / "tests" / "site_core.test.js")], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_stamp_assets(tmp_path):
+    from recette_macros.site import stamp_assets
+
+    (tmp_path / "index.html").write_text(
+        '<link rel="stylesheet" href="style.css"><script src="core.js"></script><script src="app.js?v=old"></script>'
+        '<a href="carrefour-panier.user.js">', encoding="utf-8")
+    assert stamp_assets(tmp_path, "abc123") == "abc123"
+    html = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert 'href="style.css?v=abc123"' in html and 'src="core.js?v=abc123"' in html and 'src="app.js?v=abc123"' in html
+    assert 'href="carrefour-panier.user.js"' in html  # les autres liens ne changent pas
