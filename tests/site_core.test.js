@@ -181,3 +181,12 @@ test("placard, ingrédients facultatifs et ingrédients de chaque étape", () =>
   const steps = ["Faites cuire le riz.", "Saisissez le poulet dans l'huile d'olive.", "Servez."];
   assert.deepEqual(Core.stepIngredients(steps, ["filet de poulet", "riz basmati", "huile d'olive"]), [[1], [0, 2], []]);
 });
+
+test("avec ce que j'ai : ingrédients présents et manquants, placard ignoré", () => {
+  const m = Core.fridgeMatch(["200 g filet de poulet", "100 g riz basmati", "200 g brocolis", "10 g huile d'olive", "1 bouquet persil (facultatif)"], ["Poulet", "riz"]);
+  assert.deepEqual(m.have, ["filet de poulet", "riz basmati"]);
+  assert.deepEqual(m.missing, ["brocolis"]);
+  assert.equal(Math.round(m.ratio * 100), 67);
+  assert.deepEqual(Core.fridgeMatch(["3 oeufs"], ["œufs"]).missing, []);
+  assert.equal(Core.fridgeMatch(["3 oeufs"], []).ratio, 0);
+});

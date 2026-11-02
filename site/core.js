@@ -136,6 +136,18 @@ const Core = (() => {
     });
   }
 
+  // « Avec ce que j'ai » : quels ingrédients de la recette (hors placard et facultatifs) sont déjà là, et lesquels manquent
+  function fridgeMatch(ingredients, items) {
+    const names = ingredients.map(parseLine).filter((i) => !i.error && !i.optional && !isPantry(i.name)).map((i) => i.name);
+    const toks = items.map(queryTokens).filter((t) => t.length);
+    const has = (n) => {
+      const w = words(n).map(stem);
+      return toks.some((t) => t.every((x) => w.some((y) => y.startsWith(x))));
+    };
+    const have = names.filter(has);
+    return { have, missing: names.filter((n) => !has(n)), ratio: names.length ? have.length / names.length : 0 };
+  }
+
   const parseLines = (text) => text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
 
   // Quantité multipliée (portions) ; le libellé suit, arrondi lisiblement
@@ -456,7 +468,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, isPantry, stepIngredients,
+    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch,
   };
 })();
 
