@@ -514,3 +514,35 @@ details.fold > summary small { font-weight: 700; }
 .who-chip.small .avatar { width: 30px; height: 30px; font-size: 1.05rem; }
 .who-chip.small b { font-size: 0.88rem; }
 .group-label { font-weight: 800; font-size: 0.85rem; color: var(--brand); background: var(--brand-soft); border-radius: 999px; padding: 4px 12px; }
+
+/* ---------- Ma semaine ---------- */
+.week-summary { margin: 4px 0 12px; }
+.week-summary p { margin: 4px 0 0; font-size: 0.92rem; }
+.week-strip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 16px; }
+.day-tab { display: grid; justify-items: center; gap: 2px; border: 2px solid var(--line); background: var(--surface); border-radius: var(--radius-s); padding: 8px 2px; cursor: pointer; color: var(--ink); font: inherit; }
+.day-tab b { font-size: 0.9rem; }
+.day-tab.today b { color: var(--brand); }
+.day-tab[aria-selected="true"] { border-color: var(--brand); background: var(--brand-soft); }
+.day-sport { font-size: 0.8rem; min-height: 1.1em; }
+.day-fill { width: 80%; height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.day-fill i { display: block; height: 100%; background: var(--ok); }
+.day-title { font-size: 1.25rem; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sport-badge { font-size: 0.78rem; font-family: var(--font); font-weight: 800; background: var(--brand-soft); color: var(--brand); border-radius: 999px; padding: 3px 10px; }
+.slot { background: var(--surface); border-radius: var(--radius-s); box-shadow: var(--shadow); padding: 12px 14px; margin-bottom: 10px; display: grid; gap: 8px; }
+.slot.empty { box-shadow: none; border: 2px dashed var(--line); background: transparent; }
+.slot.empty > .btn { justify-self: start; }
+.slot-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+.slot-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.slot-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: center; }
+.slot-name { font-weight: 800; color: var(--ink); text-decoration: none; }
+.slot-who { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.tile.mini { width: 64px; height: 64px; font-size: 2rem; border-radius: 14px; aspect-ratio: auto; }
+.suggest .tile.mini { width: 48px; height: 48px; font-size: 1.5rem; }
+.picker { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.picker .search { width: 100%; }
+.picker-title { margin: 6px 0 0; font-weight: 800; font-size: 0.85rem; color: var(--muted); }
+.picker .link-btn { justify-self: start; }
+.bar.kcal i { background: var(--brand); }
+.menu-extra { margin-top: 28px; }
+@media (max-width: 520px) { .day-tab b { font-size: 0.78rem; } .slot-body { grid-template-columns: 48px minmax(0, 1fr); } .tile.mini { width: 48px; height: 48px; font-size: 1.5rem; } }
+.member-intake .bar.kcal { margin: 4px 0 8px; }

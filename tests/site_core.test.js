@@ -190,3 +190,26 @@ test("avec ce que j'ai : ingrédients présents et manquants, placard ignoré", 
   assert.deepEqual(Core.fridgeMatch(["3 oeufs"], ["œufs"]).missing, []);
   assert.equal(Core.fridgeMatch(["3 oeufs"], []).ratio, 0);
 });
+
+test("jours de sport : plus d'énergie à l'entraînement, moins au repos, même total sur la semaine", () => {
+  const daily = { kcal: 2400, proteines: 165, lipides: 70, glucides: 0 };
+  const sport = Core.dayTargets(daily, 3, true);
+  const rest = Core.dayTargets(daily, 3, false);
+  assert.ok(sport.kcal > 2400 && rest.kcal < 2400);
+  assert.ok(Math.abs(sport.kcal * 3 + rest.kcal * 4 - 2400 * 7) <= 7, "même total sur la semaine (aux arrondis près)");
+  assert.equal(sport.proteines, 165);
+  assert.ok(sport.glucides > rest.glucides);
+  assert.equal(Core.dayTargets(daily, 0, false), daily);
+  const m = { id: "a", sexe: "homme", age: 25, poids: 75, taille: 178, activite: "modere", objectif: "recompo", repas: 3, sportDays: [0, 2, 4] };
+  assert.ok(Core.memberDaily(m, 0).kcal > Core.memberDaily(m, 1).kcal);
+  assert.equal(Core.memberDaily(m).kcal, Core.dailyTargets(m).kcal);
+  assert.ok(Core.memberPortions(400, [m], 0)[0].size >= Core.memberPortions(400, [m], 1)[0].size);
+});
+
+test("planning : créneaux selon le nombre de repas et repas manquants", () => {
+  assert.deepEqual(Core.slotsFor(3), ["petit-dej", "dejeuner", "diner"]);
+  assert.deepEqual(Core.slotsFor(2), ["dejeuner", "diner"]);
+  const members = [{ id: "a", repas: 3 }, { id: "b", repas: 2 }];
+  const plan = { 0: { dejeuner: { id: "x", who: ["a", "b"] }, "petit-dej": { id: "y", who: ["a"] } } };
+  assert.deepEqual(Core.planGaps(plan, members), { a: 21 - 2, b: 14 - 1 });
+});
