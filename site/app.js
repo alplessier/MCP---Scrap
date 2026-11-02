@@ -27,7 +27,7 @@ const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false };
 
 function loadState() {
   const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null,
-    custom: [], strategy: "pertinence" };
+    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
     if (saved) {
@@ -252,6 +252,14 @@ const thumb = (p) => (p && p.image
   ? `<img class="ing-img" src="${esc(p.image)}" alt="" loading="lazy" width="56" height="56">`
   : `<span class="ing-img ph" aria-hidden="true">🛍️</span>`);
 
+// Ingrédients en vignettes rondes, quantité et nom dessous (façon Jow)
+function ingredientGrid(lines) {
+  return `<ul class="ing-grid">${lines.map((x) => `<li${x.error || !x.product ? ' class="missing"' : ""}>
+    <span class="ing-round">${x.product?.image ? `<img src="${esc(x.product.image)}" alt="" loading="lazy" width="64" height="64">` : "🛍️"}</span>
+    ${x.ing.optional ? `<span class="badge-opt">Facultatif</span>` : ""}
+    <b>${x.error ? "?" : esc(C.quantityLabel(x.ing))}</b><span>${esc(x.ing.name || x.ing.raw)}</span></li>`).join("")}</ul>`;
+}
+
 function ingredientsHtml(lines) {
   return `<ul class="ingredients">${lines.map((x) => {
     if (x.error) return `<li>${thumb(null)}<div><div class="ing-head"><span>${esc(x.ing.raw)}</span></div><div class="error">${esc(x.error)}</div></div></li>`;
@@ -355,25 +363,57 @@ function viewRecipe(id) {
   const who = new Set(s.who || []);
   // même doublée (portion plafonnée à ×2), la recette reste trop légère pour ces personnes
   const light = isSnack(r) ? [] : s.sizes.filter((x) => x.meal && C.tooLightForMeal(kcalStd, x.meal));
+  const main = res.lines.filter((x) => !isSkippable(x) || x.ing.optional);
+  const pantry = res.lines.filter((x) => isSkippable(x) && !x.ing.optional);
+  const stepIng = C.stepIngredients(r.etapes || [], res.lines.map((x) => x.ing.name || ""));
+  const perPerson = res.macros.map((v) => v / s.p);
   return `
     <a class="back" href="#/">← Recettes</a>
     <div class="detail">
       <div>
-        ${tileHtml(r, "big")}
-        <div class="panel" style="margin-top:16px">
+        ${tileHtml(r, "big rec-tile")}
+        <div class="panel rec-ingredients" style="margin-top:16px">
           <h2>Ingrédients <small class="muted">· ${portionsLabel(s.p)}</small></h2>
-          ${ingredientsHtml(res.lines)}
-          <p class="hint">Quantités pour ${s.sizes.length ? "les personnes choisies, chacune selon son objectif" : `${portionsLabel(s.p)}`}. Produits et prix du ${esc(cat.magasin.nom)} ; changez de produit dans la liste si besoin.</p>
+          ${ingredientGrid(main)}
+          ${pantry.length ? `<div class="pantry-box"><b>Vous avez sûrement déjà…</b>
+            <div class="chips-select">${pantry.map((x) => pantryChip({ key: pantryKey(x), name: `${x.ing.name} (${C.quantityLabel(x.ing)})`, optional: x.ing.optional, buy: !skippedInCart(x) })).join("")}</div>
+            <p class="hint">Comptés dans les macros, mais pas ajoutés au panier. Touchez-en un s'il vous manque.</p></div>` : ""}
+          <p class="hint">Quantités pour ${s.sizes.length ? "les personnes choisies, chacune selon son objectif" : `${portionsLabel(s.p)}`}.</p>
+          <details class="drive-products"><summary>🛒 Produits du Drive et prix (${res.lines.filter((x) => x.product).length})</summary>
+            ${ingredientsHtml(res.lines)}
+            <p class="hint">Produits et prix du ${esc(cat.magasin.nom)} ; changez de produit dans la liste si besoin.</p>
+          </details>
         </div>
+        ${r.etapes && r.etapes.length ? `<div class="panel rec-steps">
+          <h2>Recette</h2>
+          <ol class="steps">${r.etapes.map((st, i) => {
+            const x = res.lines[(stepIng[i] || []).find((j) => res.lines[j].product?.image) ?? -1];
+            return `<li>${x ? `<img class="step-img" src="${esc(x.product.image)}" alt="" loading="lazy" width="40" height="40">` : `<span class="step-img ph" aria-hidden="true">${i + 1}</span>`}
+              <div><small>Étape ${i + 1}</small><p>${esc(st)}</p></div></li>`;
+          }).join("")}</ol>
+          <a class="btn primary" href="#/cuisine/${encodeURIComponent(r.id)}">👩‍🍳 Passer en cuisine</a>
+        </div>` : ""}
       </div>
       <div>
+        <div class="rec-head">
         <div class="tags">${(r.tags || []).map((t) => `<span class="tag">${esc(book.tags[t] || (t === "perso" ? "Ma recette" : t))}</span>`).join("")}</div>
         <h1>${esc(r.nom)}</h1>
         <p class="muted">${r.temps ? `⏱ ${r.temps} min · ` : ""}${euro(res.cost)} au total · ${euro(res.cost / s.p)} par personne</p>
         ${compat.ok ? "" : `<div class="warning" role="note">⚠️ Pas adaptée à votre foyer : ${esc(compat.reasons.join(", "))}.</div>`}
         <p class="traits">${traits.allergens.length ? `<span>Contient : ${esc(traits.allergens.map((a) => C.ALLERGENS[a].label.toLowerCase()).join(", "))}</span>` : `<span>Sans allergène majeur détecté</span>`}
           ${traits.equipment.length ? `<span>Matériel : ${esc(traits.equipment.map((e) => C.EQUIPMENT[e].label.toLowerCase()).join(", "))}</span>` : `<span>Sans cuisson</span>`}</p>
-        <div class="panel">
+        <div class="band" role="list">
+          <div role="listitem"><span aria-hidden="true">⏱</span><b>${r.temps ? `${r.temps} min` : "—"}</b><small>en tout</small></div>
+          <div role="listitem"><span aria-hidden="true">🔥</span><b>${num(perPerson[0])} kcal</b><small>par personne${s.sizes.length > 1 || s.guests ? " (moy.)" : ""}</small></div>
+          <div role="listitem"><span aria-hidden="true">💪</span><b>${num(perPerson[1])} g</b><small>protéines</small></div>
+          <div role="listitem"><span aria-hidden="true">💶</span><b>${euro(res.cost / s.p)}</b><small>par personne</small></div>
+        </div>
+        <div class="actions top-actions">
+          <button class="btn primary" data-action="toggle-menu" data-id="${esc(r.id)}">${inMenu ? "✓ Dans mon menu" : "+ Ajouter au menu"}</button>
+          <button class="btn" data-action="send-recipe" data-id="${esc(r.id)}">🛒 Panier Carrefour</button>
+        </div>
+        </div>
+        <div class="panel rec-who">
           <h2>Pour qui ?</h2>
           ${s.who ? `<div class="who" role="group" aria-label="Personnes servies">${state.members.map((m) => {
             const x = s.sizes.find((z) => z.id === m.id);
@@ -406,12 +446,7 @@ function viewRecipe(id) {
           ${light.length ? `<p class="hint">Même doublée, cette recette reste légère pour ${esc(light.map((x) => x.nom).join(", "))} : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
           ${res.missingMacros.length ? `<p class="hint">Macros inconnues pour : ${esc(res.missingMacros.join(", "))}.</p>` : ""}
         </div>
-        <div class="actions" style="margin-top:16px">
-          <button class="btn primary" data-action="toggle-menu" data-id="${esc(r.id)}">${inMenu ? "✓ Dans mon menu" : "+ Ajouter au menu"}</button>
-          ${r.etapes && r.etapes.length ? `<a class="btn" href="#/cuisine/${encodeURIComponent(r.id)}">👩‍🍳 Passer en cuisine</a>` : ""}
-          <button class="btn" data-action="send-recipe" data-id="${esc(r.id)}">🛒 Panier Carrefour</button>
-          ${r.perso ? `<a class="btn ghost" href="#/creer/${encodeURIComponent(r.id)}">Modifier</a>` : ""}
-        </div>
+        ${r.perso ? `<div class="actions rec-edit" style="margin-top:16px"><a class="btn ghost" href="#/creer/${encodeURIComponent(r.id)}">Modifier ma recette</a></div>` : ""}
       </div>
     </div>`;
 }
@@ -424,10 +459,16 @@ function viewCook(id) {
   const i = (ui.cookStep = Math.min(ui.cookStep, total - 1));
   const body = i === 0
     ? `<div class="cook-step"><div class="num">Avant de commencer · ${portionsLabel(res.serving.p)}</div>
-        <ul class="ingredients" style="text-align:left;margin-top:12px">${res.lines.map((x) => `<li><div class="ing-head"><span>${esc(x.ing.raw)}</span></div></li>`).join("")}</ul></div>`
-    : `<div class="cook-step"><div class="num">Étape ${i} sur ${total - 1}</div><p>${esc(r.etapes[i - 1])}</p></div>`;
+        ${ingredientGrid(res.lines)}</div>`
+    : `<div class="cook-step"><div class="num">Étape ${i} sur ${total - 1}</div><p>${esc(r.etapes[i - 1])}</p>
+        ${(() => {
+          const used = C.stepIngredients([r.etapes[i - 1]], res.lines.map((x) => x.ing.name || ""))[0].map((j) => res.lines[j]).filter((x) => !x.error);
+          return used.length ? ingredientGrid(used) : "";
+        })()}</div>`;
   return `<div class="cook" role="dialog" aria-label="Passer en cuisine : ${esc(r.nom)}">
-    <div class="cook-top"><strong>${esc(r.emoji)} ${esc(r.nom)}</strong><a class="btn small" href="#/recette/${encodeURIComponent(r.id)}">Fermer</a></div>
+    <div class="cook-top"><strong>${esc(r.emoji)} ${esc(r.nom)}</strong>
+      ${"wakeLock" in navigator ? `<label class="awake"><input type="checkbox" data-action="keep-awake"${state.keepAwake !== false ? " checked" : ""}> Écran toujours allumé</label>` : ""}
+      <a class="btn small" href="#/recette/${encodeURIComponent(r.id)}">Fermer</a></div>
     <div class="cook-body">${body}</div>
     <div class="dots" aria-hidden="true">${Array.from({ length: total }, (_, k) => `<i class="${k === i ? "on" : ""}"></i>`).join("")}</div>
     <div class="cook-nav">
@@ -486,14 +527,32 @@ function viewMenu() {
     </div>`;
 }
 
+// Placard (huile, sel, épices…) et ingrédients facultatifs : comptés dans la recette, mais hors panier
+// sauf si on demande à les acheter.
+const pantryKey = (x) => C.normalize(x.ing.name);
+const isSkippable = (x) => !x.error && (x.ing.optional || C.isPantry(x.ing.name));
+const skippedInCart = (x) => isSkippable(x) && !state.pantryBuy.includes(pantryKey(x));
+const cartLines = (lines) => lines.filter((x) => !skippedInCart(x));
+
 function menuShopping() {
   const entries = menuEntries();
   const lines = entries.flatMap(({ res }) => res.lines);
-  return { entries, list: C.shoppingList(lines, { exclude: new Set(state.owned) }) };
+  // ce qui reste au placard, regroupé par nom
+  const pantry = new Map();
+  for (const x of lines.filter(isSkippable)) {
+    const k = pantryKey(x);
+    if (!pantry.has(k)) pantry.set(k, { key: k, name: x.ing.name, optional: x.ing.optional, buy: !skippedInCart(x) });
+  }
+  return { entries, pantry: [...pantry.values()], list: C.shoppingList(cartLines(lines), { exclude: new Set(state.owned) }) };
+}
+
+function pantryChip(item) {
+  return `<button type="button" class="chip pantry-chip" data-action="pantry-buy" data-key="${esc(item.key)}" aria-pressed="${item.buy}"
+    title="${item.buy ? "Sera ajouté au panier" : "Pas ajouté au panier"}">${item.buy ? "🛒" : "✓"} ${esc(item.name)}${item.optional ? " · facultatif" : ""}</button>`;
 }
 
 function viewCourses() {
-  const { entries, list } = menuShopping();
+  const { entries, list, pantry } = menuShopping();
   if (!entries.length) {
     return `<div class="page-head"><h1>Courses</h1></div>
       <div class="empty"><div class="big-emoji">🛒</div><p>Ajoutez des recettes à votre menu : la liste de courses se fait toute seule.</p>
@@ -511,6 +570,9 @@ function viewCourses() {
     <div class="two-cols">
       <div>
         <p class="muted">Cochez ce que vous avez déjà : ce ne sera pas ajouté au panier.</p>
+        ${pantry.length ? `<div class="pantry-box"><b>Vous avez sûrement déjà…</b>
+          <div class="chips-select">${pantry.map(pantryChip).join("")}</div>
+          <p class="hint">Pas ajoutés au panier. Touchez-en un s'il vous manque.</p></div>` : ""}
         ${[...groups].map(([g, items]) => `<div class="shop-group"><h3>${esc(g)}</h3>${items.map((e) => `
           <label class="shop-item${e.owned ? " owned" : ""}">
             <input type="checkbox" data-action="owned" data-ean="${esc(e.product.ean)}" ${e.owned ? "checked" : ""} aria-label="J'ai déjà : ${esc(e.product.nom)}">
@@ -887,6 +949,25 @@ const ROUTES = [
   [/^#\/produits$/, () => viewProducts(), "recettes"],
 ];
 
+// En cuisine, l'écran reste allumé (comme « Désactiver la veille » chez Jow), si le navigateur le permet
+let wakeLock = null, wakePending = false;
+async function syncWakeLock() {
+  const want = /^#\/cuisine\//.test(location.hash) && state.keepAwake !== false && document.visibilityState === "visible";
+  if (!("wakeLock" in navigator) || wakePending) return;
+  wakePending = true;
+  try {
+    if (want && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!want && wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch { wakeLock = null; /* refusé (batterie faible, onglet masqué…) : sans effet */ }
+  wakePending = false;
+}
+document.addEventListener("visibilitychange", syncWakeLock);
+
 let lastHash = null;
 function render({ keepScroll = false } = {}) {
   const hash = location.hash || "#/";
@@ -906,6 +987,7 @@ function render({ keepScroll = false } = {}) {
   const focusId = active && view.contains(active) ? active.id : null;
   const caret = focusId ? active.selectionStart : null;
   view.innerHTML = route ? route[1](hash.match(route[0])) : notFound();
+  syncWakeLock();
   document.querySelectorAll(".nav a").forEach((a) => {
     if (route && a.dataset.route === route[2]) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -1104,7 +1186,7 @@ document.addEventListener("click", (e) => {
     case "show-all": ui.showAll = !ui.showAll; render({ keepScroll: true }); break;
     case "send-recipe": {
       const r = recipeById(id);
-      sendToCart(r.nom, C.shoppingList(compute(r).lines, { exclude: new Set(state.owned) }));
+      sendToCart(r.nom, C.shoppingList(cartLines(compute(r).lines), { exclude: new Set(state.owned) }));
       break;
     }
     case "send-menu": {
@@ -1113,6 +1195,14 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "save-draft": saveDraft(); break;
+    case "pantry-buy": {
+      const set = new Set(state.pantryBuy);
+      if (set.has(el.dataset.key)) set.delete(el.dataset.key); else set.add(el.dataset.key);
+      state.pantryBuy = [...set];
+      save();
+      render({ keepScroll: true });
+      break;
+    }
     case "reset-draft": state.draft = null; ui.ingQuery = ""; save(); render(); break;
     case "add-ing": {
       const d = addToDraft(el.dataset.ean);
@@ -1176,6 +1266,10 @@ document.addEventListener("change", (e) => {
     render({ keepScroll: true });
   } else if (el.dataset.action === "ing-qty") {
     render({ keepScroll: true });
+  } else if (el.dataset.action === "keep-awake") {
+    state.keepAwake = el.checked;
+    save();
+    syncWakeLock();
   } else if (el.dataset.action === "product-rayon") {
     ui.productRayon = el.value;
     render({ keepScroll: true });
