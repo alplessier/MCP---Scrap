@@ -68,6 +68,7 @@ quantités s'ajoutent à ce qui est déjà au panier, et les produits indisponib
 |---|---|
 | `200 g blanc de poulet` | quantité en `g`, `kg`, `ml`, `cl` ou `l` (1 ml est compté comme 1 g pour les macros) |
 | `2 oeufs @60g` | pièces, avec le poids d'une pièce (nécessaire pour les macros) |
+| `1 bouquet coriandre (facultatif)` | ingrédient facultatif : affiché avec un badge, pas ajouté au panier par défaut |
 | `3 avocats` | pièces : le prix est calculé si le produit est vendu à la pièce |
 | `100 g skyr #3560070945252` | impose un produit précis par son code-barres |
 
