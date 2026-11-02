@@ -22,7 +22,7 @@ Inspiré de la simplicité de Jow, avec en plus la partie nutrition et sport :
 | **Avec ce que j'ai** | On indique ce qu'il y a dans le frigo et les placards ; les recettes compatibles avec le foyer sont classées par ingrédients manquants (« ✓ 3/4 · il manque : lait de coco »). Huile, sel et épices sont supposés déjà là. |
 | **Fiche recette** | Bandeau des chiffres clés (temps, kcal et protéines par personne, prix), ingrédients en vignettes rondes, **« Pour qui ? »** : on coche les profils du foyer (et des invités) ; chacun reçoit la portion de son objectif, ses apports sont comparés à son repas idéal, et les quantités comme le panier suivent. **« Vous avez sûrement déjà… »** : huile, sel, épices, sauce soja… et ingrédients `(facultatif)` comptés dans les macros mais hors panier, sauf si on les demande. Étapes illustrées par l'ingrédient utilisé ; choix des produits du Drive dans un volet. Mode **« Passer en cuisine »** étape par étape, avec les ingrédients de l'étape et l'écran qui reste allumé. |
 | **Menu** | Les recettes de la semaine, leurs couverts, le coût total et la moyenne des macros par repas. |
-| **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour. |
+| **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour, ou ouvrez la **liste guidée** sans rien installer. |
 | **Profil** | Le **foyer** : seul, en couple ou en famille, plusieurs profils (membres présents ou non). Chaque membre : âge, poids, taille, activité, objectif (sèche, recomposition, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor) ; allergies et intolérances (14 allergènes majeurs simplifiés à 10), régime (végétarien, pescétarien, végétalien, sans porc), petit-déjeuner sucré ou salé, ingrédients détestés (liste déroulante). Pour le foyer : budget par jour et par personne, temps de cuisine par jour, matériel disponible. Les recettes incompatibles avec un membre présent sont masquées ; budget, temps et goût du petit-déjeuner font baisser la note ; chaque fiche propose « Adapter au foyer » avec la portion de chacun. |
 | **Créer** (onglet) | On cherche un produit du Drive (photo, prix, macros), on l'ajoute d'un clic et on règle la quantité ; le produit choisi reste modifiable. Depuis « Produits du Drive », le bouton **+ Ma recette** ajoute aussi un produit. Saisie en texte toujours possible. Le brouillon est conservé jusqu'à l'enregistrement. |
 
@@ -50,14 +50,18 @@ Le bouton **🛒 Ajouter au panier Carrefour** ouvre carrefour.fr sur le Drive J
 entiers de la recette au panier. Si vous êtes connecté à votre compte, ce panier est aussi celui de
 l'**application Carrefour** : il ne reste qu'à choisir le créneau et payer.
 
-Un site extérieur ne peut pas toucher au panier Carrefour (le navigateur l'interdit). L'ajout est donc fait
-**sur carrefour.fr** par `site/carrefour-panier.js`, installé une fois au choix :
+Un site extérieur ne peut pas toucher au panier Carrefour (le navigateur l'interdit), et Carrefour n'offre
+ni API publique ni lien d'ajout groupé. Deux façons de faire :
 
-- **Userscript (recommandé, un seul clic ensuite)** : extension [Violentmonkey](https://violentmonkey.github.io/)
-  ou [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge, Firefox Android ; app « Userscripts »
-  sur iPhone), puis le lien `carrefour-panier.user.js` du site. Il se met à jour tout seul.
-- **Favori** : glisser le bouton « 🛒 Panier recette » dans la barre de favoris, et cliquer dessus une fois la
-  page Carrefour ouverte.
+- **Liste guidée, sans rien installer** (`#/panier-guide`) : chaque produit s'ouvre sur carrefour.fr, ou dans
+  l'application Carrefour sur mobile si elle prend le lien ; on l'ajoute et il est coché. Progression conservée.
+- **Tout en un clic, avec le script** `site/carrefour-panier.js`, installé une fois :
+  extension [Tampermonkey](https://www.tampermonkey.net/) ou [Violentmonkey](https://violentmonkey.github.io/)
+  (ordinateur, Firefox sur Android) ou app « Userscripts » (Safari sur iPhone), puis le lien
+  `carrefour-panier.user.js` du site. Le script s'annonce aussi sur le site : une fois installé, le bouton
+  ouvre directement Carrefour, sans fenêtre d'explication. Il se met à jour tout seul. La fenêtre d'envoi
+  affiche les étapes d'installation propres à l'appareil (ordinateur, Android, iPhone).
+- Sur ordinateur, un **favori** « 🛒 Panier recette » reste possible, à cliquer une fois la page Carrefour ouverte.
 
 La recette voyage dans l'ancre de l'adresse (`#recette-macros=…`), qui n'est jamais envoyée à un serveur.
 Le script utilise la fonction d'ajout du site Carrefour lui-même (`window.ONECF.addToCart`). Les

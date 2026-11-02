@@ -37,30 +37,26 @@
   <dialog id="cart-dialog" class="dialog" aria-labelledby="cart-dialog-title">
     <form method="dialog">
       <h2 id="cart-dialog-title">Envoyer au panier Carrefour</h2>
-      <p>Un site extérieur ne peut pas remplir votre panier : c'est une protection du navigateur. Un petit script,
-        installé <strong>une seule fois</strong>, fait l'ajout sur carrefour.fr, dans votre compte. Les produits
-        apparaissent ensuite aussi dans l'<strong>application Carrefour</strong>.</p>
+      <p>Deux façons de faire. Le panier est celui de votre compte : il apparaît aussi dans l'<strong>application Carrefour</strong>.</p>
       <div class="option">
-        <h3>Option 1 — Automatique (recommandé)</h3>
-        <ol>
-          <li>Installez l'extension gratuite <a href="https://violentmonkey.github.io/get-it/" target="_blank" rel="noopener">Violentmonkey</a>
-            ou <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a>
-            (Chrome, Firefox, Edge, Firefox Android ; sur iPhone : l'app « Userscripts » pour Safari).</li>
-          <li><a href="carrefour-panier.user.js" target="_blank" rel="noopener">Installer le script « Panier Carrefour »</a>, puis confirmez dans l'extension.</li>
-        </ol>
-        <p class="muted">Ensuite, un clic suffit : carrefour.fr s'ouvre et remplit le panier.</p>
+        <h3>📋 Liste guidée — sans rien installer</h3>
+        <p class="muted">Chaque produit s'ouvre sur carrefour.fr (ou dans l'application sur mobile) : vous l'ajoutez d'un geste et le cochez.</p>
+        <button class="btn primary" value="guide" type="submit">Ouvrir la liste guidée</button>
       </div>
       <div class="option">
-        <h3>Option 2 — Sans extension, avec un favori</h3>
+        <h3>⚡ Tout ajouter en un clic — à installer une seule fois</h3>
+        <div id="cart-setup-steps"></div>
+        <p class="muted">Une fois installé, le site le détecte : le bouton ouvre directement Carrefour et remplit le panier, sans cette fenêtre.</p>
+        <button class="btn" value="reload" type="submit">🔄 C'est installé : recharger la page</button>
+      </div>
+      <details class="option desktop-only">
+        <summary>Autre option sur ordinateur : un favori, sans extension</summary>
         <p>Glissez ce bouton dans votre barre de favoris :
           <a id="bookmarklet" class="bookmarklet" href="#" title="Glissez-moi dans la barre de favoris">🛒 Panier recette</a></p>
         <p class="muted">Après chaque envoi, cliquez sur ce favori une fois la page Carrefour ouverte.</p>
-      </div>
-      <p class="muted">Connectez-vous à votre compte sur carrefour.fr dans ce navigateur pour retrouver le panier dans l'application.
-        Les quantités s'ajoutent à ce qui est déjà au panier.</p>
-      <label class="check"><input type="checkbox" id="cart-dialog-skip"> C'est installé, ne plus afficher cette fenêtre</label>
+        <button class="btn small" value="send" type="submit">Ouvrir Carrefour</button>
+      </details>
       <div class="actions">
-        <button class="btn primary" value="send" type="submit">Ouvrir Carrefour et ajouter</button>
         <button class="btn ghost" value="cancel" type="submit">Annuler</button>
       </div>
     </form>

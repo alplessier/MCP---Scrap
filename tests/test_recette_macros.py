@@ -190,6 +190,7 @@ def test_build_userscript(tmp_path):
     (tmp_path / "carrefour-panier.js").write_text("console.log(1);\n", encoding="utf-8")
     script = build_userscript(tmp_path).read_text(encoding="utf-8")
     assert script.startswith("// ==UserScript==") and "@match        https://www.carrefour.fr/*" in script
+    assert "@match        https://alplessier.github.io/MCP---Scrap/*" in script  # le site détecte le script
     assert script.endswith("console.log(1);\n")
     # version datée, toujours croissante : les extensions ne mettent à jour que vers une version supérieure
     assert re.search(r"@version      1\.\d{8}\.\d{4}\n", script)
