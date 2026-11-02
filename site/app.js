@@ -668,6 +668,7 @@ function viewCourses() {
         <div class="total-line big"><span>${toBuy.length} produit${toBuy.length > 1 ? "s" : ""}</span><span>${euro(total)}</span></div>
         <p class="hint">Paquets entiers, aux prix du relevé du ${new Date(cat.maj).toLocaleDateString("fr-FR")}. Les promotions fidélité ne sont pas déduites.</p>
         <button class="btn primary block" data-action="send-menu" ${toBuy.length ? "" : "disabled"} style="margin-top:12px">🛒 Envoyer au panier Carrefour</button>
+        <button class="btn block" data-action="guide-menu" ${toBuy.length ? "" : "disabled"} style="margin-top:8px">📋 Liste guidée, sans installation</button>
         <p class="hint">Ouvre carrefour.fr sur le Drive Jaude et ajoute ces produits à votre panier, aussi visible dans l'application.</p>
       </aside>
     </div>`;
@@ -1030,6 +1031,7 @@ const ROUTES = [
   [/^#\/creer(?:\/(.+))?$/, (m) => viewCreate(m[1] && decodeURIComponent(m[1])), "creer"],
   [/^#\/produits$/, () => viewProducts(), "recettes"],
   [/^#\/frigo$/, () => viewFridge(), "recettes"],
+  [/^#\/panier-guide$/, () => viewCartGuide(), "courses"],
 ];
 
 // En cuisine, l'écran reste allumé (comme « Désactiver la veille » chez Jow), si le navigateur le permet
@@ -1128,24 +1130,110 @@ async function prepareBookmarklet() {
   } catch { /* le favori reste inactif, l'option 1 fonctionne toujours */ }
 }
 
+// Le script installé (extension) s'annonce sur ce site : on ouvre alors Carrefour directement
+const scriptInstalled = () => document.documentElement.dataset.panierCarrefour === "installe";
+
+function device() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) return "ios";
+  if (/Android/.test(ua)) return "android";
+  return "desktop";
+}
+
+const SCRIPT_LINK = `<a href="carrefour-panier.user.js" target="_blank" rel="noopener">Installer le script « Panier Carrefour »</a>`;
+const SETUP_STEPS = {
+  desktop: `<ol>
+      <li>Ajoutez l'extension gratuite <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a>
+        ou <a href="https://violentmonkey.github.io/get-it/" target="_blank" rel="noopener">Violentmonkey</a> à votre navigateur (Chrome, Edge, Firefox, Safari).</li>
+      <li>${SCRIPT_LINK}, puis confirmez « Installer » dans l'extension.</li>
+      <li>Revenez ici et rechargez la page.</li></ol>`,
+  android: `<ol>
+      <li>Ouvrez ce site dans <a href="https://play.google.com/store/apps/details?id=org.mozilla.firefox" target="_blank" rel="noopener">Firefox</a> (Chrome sur Android n'accepte pas les extensions).</li>
+      <li>Dans Firefox : menu ⋮ → Extensions → ajoutez <b>Tampermonkey</b> ou <b>Violentmonkey</b>.</li>
+      <li>${SCRIPT_LINK}, puis confirmez « Installer ».</li>
+      <li>Revenez ici et rechargez la page.</li></ol>`,
+  ios: `<ol>
+      <li>Installez l'app gratuite <a href="https://apps.apple.com/app/userscripts/id1463298887" target="_blank" rel="noopener">Userscripts</a>.</li>
+      <li>Réglages → Apps → Safari → Extensions → Userscripts : activez-la et autorisez-la sur <b>carrefour.fr</b> et <b>alplessier.github.io</b>.</li>
+      <li>Dans Safari, ${SCRIPT_LINK.replace("Installer", "ouvrez")} puis touchez l'icône Userscripts (barre d'adresse) → Installer.</li>
+      <li>Revenez ici et rechargez la page.</li></ol>`,
+};
+
+// Garde la dernière liste envoyée, pour la liste guidée
+function rememberCart(nom, list) {
+  const items = list.filter((e) => !e.owned && e.packs).map((e) => [e.product.ean, e.packs]);
+  const prev = state.lastCart;
+  const same = prev && JSON.stringify(prev.items) === JSON.stringify(items);
+  state.lastCart = { nom, items, done: same ? prev.done : [], date: new Date().toISOString() };
+  save();
+}
+
 function sendToCart(nom, list) {
   if (!list.some((e) => !e.owned && e.packs)) return toast("Rien à ajouter au panier.");
+  rememberCart(nom, list);
   const url = C.cartUrl(cat, nom, list);
-  if (setupDone()) {
+  if (scriptInstalled() || setupDone()) {
     window.open(url, "_blank", "noopener");
     return;
   }
   const dialog = $("#cart-dialog");
-  prepareBookmarklet();
+  $("#cart-setup-steps").innerHTML = SETUP_STEPS[device()];
+  dialog.querySelector(".desktop-only").hidden = device() !== "desktop";
+  if (device() === "desktop") prepareBookmarklet();
   dialog.addEventListener("close", function onClose() {
     dialog.removeEventListener("close", onClose);
-    if (dialog.returnValue !== "send") return;
-    if ($("#cart-dialog-skip").checked) {
-      try { localStorage.setItem(CART_SETUP_KEY, "1"); } catch { /* sans effet */ }
-    }
-    window.open(url, "_blank", "noopener");
+    if (dialog.returnValue === "send") window.open(url, "_blank", "noopener");
+    else if (dialog.returnValue === "guide") location.hash = "#/panier-guide";
+    else if (dialog.returnValue === "reload") location.reload();
   });
   dialog.showModal();
+}
+
+// Liste guidée : chaque produit s'ouvre sur carrefour.fr (ou dans l'application Carrefour sur mobile)
+function viewCartGuide() {
+  const lc = state.lastCart;
+  if (!lc || !lc.items.length) {
+    return `<div class="page-head"><h1>Liste guidée</h1></div>
+      <div class="empty"><div class="big-emoji">📋</div><p>Envoyez d'abord une recette ou votre menu au panier.</p>
+      <a class="btn primary" href="#/courses">Mes courses</a></div>`;
+  }
+  const rows = lc.items.map(([ean, packs]) => ({ p: cat.byEan.get(ean), ean, packs, done: lc.done.includes(ean) })).filter((x) => x.p);
+  const done = rows.filter((x) => x.done).length;
+  const total = rows.reduce((a, x) => a + (x.p.prix || 0) * x.packs, 0);
+  const mobile = device() !== "desktop";
+  return `<a class="back" href="#/courses">← Courses</a>
+    <div class="page-head"><h1>Liste guidée</h1><span class="muted">${esc(lc.nom)}</span></div>
+    <div class="two-cols guide-page">
+      <div>
+        <div class="panel guide-store">
+          <b>1. Choisissez votre Drive</b>
+          <p class="muted">${mobile ? "Dans l'application Carrefour ou sur carrefour.fr, le magasin" : "Sur carrefour.fr, le magasin"} doit être le <b>${esc(cat.magasin.nom)}</b>, sinon les prix et la disponibilité diffèrent.</p>
+          <a class="btn small" href="https://www.carrefour.fr/set-store/${encodeURIComponent(cat.magasin.ref)}" target="_blank" rel="noopener">Choisir ce Drive sur carrefour.fr</a>
+        </div>
+        <h2 class="guide-title">2. Ajoutez chaque produit</h2>
+        <ul class="guide">${rows.map((x) => `<li class="${x.done ? "done" : ""}">
+          <label class="guide-check"><input type="checkbox" data-action="guide-done" data-ean="${esc(x.ean)}"${x.done ? " checked" : ""} aria-label="Ajouté : ${esc(x.p.nom)}"></label>
+          ${thumb(x.p)}
+          <div><b>${esc(x.p.nom)}</b><small>${x.packs} × ${esc(x.p.conditionnement || "article")} · ${euro((x.p.prix || 0) * x.packs)}</small></div>
+          ${x.p.url ? `<a class="btn small${x.done ? " ghost" : " primary"}" href="${esc(x.p.url)}" target="_blank" rel="noopener" data-action="guide-open" data-ean="${esc(x.ean)}">${x.done ? "Revoir" : "Ouvrir"}</a>` : ""}
+        </li>`).join("")}</ul>
+      </div>
+      <aside class="panel sticky">
+        <h2>Progression</h2>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${rows.length}" aria-valuenow="${done}"><i style="width:${rows.length ? (done / rows.length) * 100 : 0}%"></i></div>
+        <div class="total-line big"><span>${done} / ${rows.length} ajoutés</span><span>${euro(total)}</span></div>
+        <p class="hint">« Ouvrir » affiche le produit sur carrefour.fr${mobile ? ", ou dans l'application Carrefour si elle est installée" : ""}. Ajoutez la quantité indiquée, revenez ici : le produit est coché automatiquement.</p>
+        ${done ? `<button class="link-btn" data-action="guide-reset">Tout décocher</button>` : ""}
+        ${scriptInstalled() ? "" : `<p class="hint">Plus rapide : le script « Panier Carrefour » ajoute tout en un clic (bouton « Envoyer au panier », option ⚡).</p>`}
+      </aside>
+    </div>`;
+}
+
+function setGuideDone(ean, value) {
+  const set = new Set(state.lastCart.done);
+  if (value) set.add(ean); else set.delete(ean);
+  state.lastCart.done = [...set];
+  save();
 }
 
 function changed() {
@@ -1272,6 +1360,12 @@ document.addEventListener("click", (e) => {
       sendToCart(r.nom, C.shoppingList(cartLines(compute(r).lines), { exclude: new Set(state.owned) }));
       break;
     }
+    case "guide-menu": {
+      const { entries, list } = menuShopping();
+      rememberCart(entries.length === 1 ? entries[0].r.nom : `Menu de ${entries.length} recettes`, list);
+      location.hash = "#/panier-guide";
+      break;
+    }
     case "send-menu": {
       const { entries, list } = menuShopping();
       sendToCart(entries.length === 1 ? entries[0].r.nom : `Menu de ${entries.length} recettes`, list);
@@ -1296,6 +1390,12 @@ document.addEventListener("click", (e) => {
     case "fridge-add": addFridge(el.dataset.value); render({ keepScroll: true }); break;
     case "fridge-remove": state.fridge = state.fridge.filter((x) => x !== el.dataset.value); save(); render({ keepScroll: true }); break;
     case "fridge-clear": state.fridge = []; save(); render({ keepScroll: true }); break;
+    case "guide-open":
+      // le lien s'ouvre normalement ; au retour sur l'onglet, le produit est déjà coché
+      setGuideDone(el.dataset.ean, true);
+      setTimeout(() => render({ keepScroll: true }), 300);
+      break;
+    case "guide-reset": state.lastCart.done = []; save(); render({ keepScroll: true }); break;
     case "pantry-buy": {
       const set = new Set(state.pantryBuy);
       if (set.has(el.dataset.key)) set.delete(el.dataset.key); else set.add(el.dataset.key);
@@ -1372,6 +1472,9 @@ document.addEventListener("change", (e) => {
     addFridge(el.value);
     render({ keepScroll: true });
     $("#fridge-input")?.focus();
+  } else if (el.dataset.action === "guide-done") {
+    setGuideDone(el.dataset.ean, el.checked);
+    render({ keepScroll: true });
   } else if (el.dataset.action === "keep-awake") {
     state.keepAwake = el.checked;
     save();

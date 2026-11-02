@@ -484,3 +484,25 @@ details.fold { border-top: 1px solid var(--line); margin-top: 10px; padding-top:
 details.fold > summary { cursor: pointer; font-weight: 800; padding: 6px 0; list-style-position: inside; }
 details.fold > summary small { font-weight: 700; }
 .rec-head details.fold { border: 0; margin: 0 0 8px; padding: 0; }
+
+/* ---------- Liste guidée du panier ---------- */
+.guide-store { display: grid; gap: 6px; justify-items: start; }
+.guide-store p { margin: 0; }
+.guide-title { font-size: 1.1rem; margin: 18px 0 10px; }
+.guide { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.guide li { display: grid; grid-template-columns: auto 56px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: var(--surface); border-radius: var(--radius-s); box-shadow: var(--shadow); padding: 8px 10px; }
+.guide li.done { opacity: 0.55; }
+.guide li.done b { text-decoration: line-through; }
+.guide b { display: block; font-size: 0.92rem; }
+.guide small { color: var(--muted); font-weight: 700; font-size: 0.8rem; }
+.guide-check input { width: 22px; height: 22px; accent-color: var(--ok); cursor: pointer; }
+@media (max-width: 520px) {
+  .guide li { grid-template-columns: auto 40px minmax(0, 1fr) auto; gap: 8px; padding: 8px; }
+  .guide li .ing-img { width: 40px; height: 40px; }
+  .guide b { font-size: 0.85rem; }
+}
+@media (max-width: 860px) { .guide-page aside { order: -1; position: static; } }
+.progress { height: 12px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin: 6px 0 10px; }
+.progress i { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width 0.3s; }
+.dialog .option summary { cursor: pointer; font-weight: 800; }
+.dialog .option .btn { margin-top: 6px; }

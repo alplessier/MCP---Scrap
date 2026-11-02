@@ -5,6 +5,12 @@
 // Le panier étant lié au compte Carrefour, les produits apparaissent aussi dans l'application.
 (function () {
   "use strict";
+  // Sur le site Recettes & macros : on signale seulement que le script est installé, pour que le
+  // bouton du panier ouvre Carrefour directement, sans fenêtre d'explication.
+  if (location.hostname !== "www.carrefour.fr") {
+    document.documentElement.dataset.panierCarrefour = "installe";
+    return;
+  }
   const MARK = "#recette-macros=";
   if (!location.hash.startsWith(MARK)) {
     if (window.__recetteMacrosBookmarklet) {

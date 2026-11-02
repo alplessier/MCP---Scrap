@@ -15,6 +15,7 @@ USERSCRIPT_HEADER = """// ==UserScript==
 // @version      {version}
 // @description  Ajoute au panier carrefour.fr les produits d'une recette du site Recettes & macros
 // @match        https://www.carrefour.fr/*
+// @match        {site}/*
 // @run-at       document-idle
 // @grant        none
 // @downloadURL  {site}/carrefour-panier.user.js
