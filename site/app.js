@@ -28,7 +28,7 @@ const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false, folds:
 function loadState() {
   const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null, group: null,
     custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true,
-    favs: [], fridge: [] };
+    favs: [], fridge: [], plan: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
     if (saved) {
@@ -119,8 +119,14 @@ function recipeById(id) { return state.custom.find((r) => r.id === id) || book.b
 
 // ---------- Calculs ----------
 
-function targets(member = me()) {
-  const daily = member ? C.dailyTargets(member) : null;
+// Jours de la semaine : 0 = lundi
+const DAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+const today = () => (new Date().getDay() + 6) % 7;
+const isSportDay = (m, d = today()) => !!m && (m.sportDays || []).includes(d);
+
+// Besoins d'un membre pour un jour (aujourd'hui par défaut : jour de sport ou de repos), ou en moyenne (day = null)
+function targets(member = me(), day = today()) {
+  const daily = member ? C.memberDaily(member, day) : null;
   return { daily, meal: daily ? C.mealTarget(daily, member.repas || 3) : null };
 }
 
@@ -137,7 +143,7 @@ function servingOf(r) {
   const members = s.who.map(memberById).filter(Boolean);
   const sizes = isSnack(r)
     ? members.map((m) => ({ id: m.id, nom: m.nom, size: 1, meal: targets(m).meal }))
-    : C.memberPortions(stats(r).macros[0], members);
+    : C.memberPortions(stats(r).macros[0], members, today());
   const guests = s.guests || 0;
   const p = sizes.length + guests;
   if (!p) return { who: [], p: 1, t: 1, sizes: [], guests: 1 };
@@ -350,7 +356,7 @@ function viewRecipes() {
         <h1>On mange quoi ce soir ?</h1>
         <p>Des recettes pensées pour vos objectifs, au prix du Drive Jaude, et votre panier rempli en un clic.</p>
         ${daily
-          ? `<a class="goal-pill" href="#/profil">${group().length > 1 ? `👥 ${groupLabel(group().length)} : ${esc(listNames(group()))}` : `🎯 ${esc(m.nom)} : ${C.GOALS[m.objectif]?.label || "Objectif"} · ${num(daily.kcal)} kcal · ${num(daily.proteines)} g de protéines / jour`}</a>`
+          ? `<a class="goal-pill" href="#/profil">${group().length > 1 ? `👥 ${groupLabel(group().length)} : ${esc(listNames(group()))}` : `${isSportDay(m) ? "🏋️ Jour de sport" : "🎯"} ${esc(m.nom)} : ${C.GOALS[m.objectif]?.label || "Objectif"} · ${num(daily.kcal)} kcal · ${num(daily.proteines)} g de protéines aujourd'hui`}</a>`
           : `<a class="goal-pill" href="#/profil">💪 Créer mon profil et calculer mes besoins →</a>`}
       </div>
       <div class="hero-art" aria-hidden="true">🥗</div>
@@ -602,52 +608,200 @@ function viewCook(id) {
   </div>`;
 }
 
+// ---------- Planning de la semaine ----------
+// state.plan[jour][créneau] = { id: recette, who: [membres] } ; jour 0 = lundi.
+
+const slotEntry = (d, slot) => (state.plan[d] || {})[slot] || null;
+
+// Taille de portion de chacun pour une recette, calée sur son repas idéal de ce jour-là
+function entrySizes(r, who, d) {
+  const members = who.map(memberById).filter(Boolean);
+  return C.memberPortions(stats(r).macros[0], members, d).map((x) => ({ ...x, size: isSnack(r) ? 1 : x.size }));
+}
+
+// Créneaux à afficher pour un jour : ceux des personnes du planning, plus ceux déjà remplis
+function daySlots(d) {
+  const used = new Set(group().flatMap((m) => C.slotsFor(m.repas || 3)));
+  Object.keys(state.plan[d] || {}).forEach((k) => used.add(k));
+  return Object.keys(C.SLOTS).filter((k) => used.has(k));
+}
+
+// Apports d'un membre sur une journée
+function dayIntake(m, d) {
+  const total = [0, 0, 0, 0];
+  let cost = 0;
+  for (const slot of Object.keys(state.plan[d] || {})) {
+    const e = slotEntry(d, slot);
+    const r = e && recipeById(e.id);
+    if (!r || !e.who.includes(m.id)) continue;
+    const size = entrySizes(r, [m.id], d)[0].size;
+    stats(r).macros.forEach((v, i) => (total[i] += v * size));
+    cost += stats(r).cost * size;
+  }
+  return { macros: total, cost };
+}
+
+function planEntries() {
+  const out = [];
+  for (const [d, slots] of Object.entries(state.plan)) {
+    for (const [slot, e] of Object.entries(slots)) {
+      const r = recipeById(e.id);
+      const who = e.who.filter(memberById);
+      if (!r || !who.length) continue;
+      const sizes = entrySizes(r, who, +d);
+      const sum = sizes.reduce((a, x) => a + x.size, 0);
+      out.push({ r, d: +d, slot, res: compute(r, { p: who.length, t: sum / who.length, sizes: [], guests: 0 }) });
+    }
+  }
+  return out;
+}
+
+function slotKind(slot) { return slot === "petit-dej" ? "petit-dej" : slot === "collation" || slot === "soir" ? "collation" : "repas"; }
+
+// Recettes proposées pour un créneau : celles du menu d'abord, puis les mieux notées et compatibles avec ces personnes
+function pickerHtml(d, slot) {
+  const who = (slotEntry(d, slot)?.who || defaultWho(d, slot)).map(memberById).filter(Boolean);
+  const pr = C.householdPrefs(who, state.foyer);
+  const q = C.queryTokens(ui.pickQuery || "");
+  const kind = slotKind(slot);
+  const fits = (r) => {
+    if (q.length) {
+      const w = C.words(`${r.nom} ${r.ingredients.join(" ")}`);
+      return q.every((t) => w.some((x) => x.startsWith(t)));
+    }
+    const tags = r.tags || [];
+    return kind === "petit-dej" ? tags.includes("petit-dej") : kind === "collation" ? tags.includes("collation") : !tags.includes("collation") && !tags.includes("petit-dej");
+  };
+  const mean = (r) => {
+    const sc = who.map((m) => memberScore(r, m)?.score).filter((x) => x != null);
+    return sc.length ? sc.reduce((a, b) => a + b, 0) / sc.length : 0;
+  };
+  const ok = allRecipes().filter((r) => C.recipeCompat(r, pr, traitsOf(r)).ok);
+  const fromMenu = ok.filter((r) => state.menu[r.id]);
+  const best = ok.filter((r) => !state.menu[r.id] && fits(r)).sort((a, b) => mean(b) - mean(a)).slice(0, 6);
+  const row = (r) => `<li><button type="button" data-action="plan-set" data-day="${d}" data-slot="${slot}" data-id="${esc(r.id)}">
+      ${tileHtml(r, "mini")}<span><b>${esc(r.nom)}</b><small>${num(stats(r).macros[0])} kcal · ${num(stats(r).macros[1])} g prot. / portion${r.temps ? ` · ⏱ ${r.temps} min` : ""}</small></span><span class="plus" aria-hidden="true">+</span></button></li>`;
+  return `<div class="picker">
+    <input id="pick-search" class="search" type="search" data-action="pick-query" value="${esc(ui.pickQuery || "")}" placeholder="Chercher une recette…" autocomplete="off">
+    ${fromMenu.length ? `<p class="picker-title">Dans mon menu</p><ul class="suggest">${fromMenu.map(row).join("")}</ul>` : ""}
+    <p class="picker-title">${q.length ? "Résultats" : `Suggestions pour ${esc(listNames(who) || "vous")}`}</p>
+    <ul class="suggest">${best.map(row).join("") || `<li class="muted">Aucune recette.</li>`}</ul>
+    <button type="button" class="link-btn" data-action="plan-cancel">Fermer</button>
+  </div>`;
+}
+
+// Par défaut, une recette d'un créneau est pour les personnes du planning qui ont ce repas
+function defaultWho(d, slot) {
+  const ids = group().filter((m) => C.slotsFor(m.repas || 3).includes(slot)).map((m) => m.id);
+  return ids.length ? ids : group().map((m) => m.id);
+}
+
+function slotHtml(d, slot) {
+  const e = slotEntry(d, slot);
+  const r = e && recipeById(e.id);
+  const meta = C.SLOTS[slot];
+  const need = group().filter((m) => C.slotsFor(m.repas || 3).includes(slot));
+  const picking = ui.pick === `${d}|${slot}`;
+  if (!r) {
+    return `<div class="slot empty">
+      <div class="slot-head"><span>${meta.icon} <b>${meta.label}</b></span><span class="muted">${need.map((m) => esc(m.emoji)).join("")}</span></div>
+      ${picking ? pickerHtml(d, slot) : `<button type="button" class="btn small" data-action="plan-pick" data-day="${d}" data-slot="${slot}">+ Choisir une recette</button>`}
+    </div>`;
+  }
+  const sizes = entrySizes(r, e.who.filter(memberById), d);
+  return `<div class="slot">
+    <div class="slot-head"><span>${meta.icon} <b>${meta.label}</b></span>
+      <span class="slot-actions">
+        <button type="button" class="link-btn" data-action="plan-pick" data-day="${d}" data-slot="${slot}">Changer</button>
+        ${d < 6 ? `<button type="button" class="link-btn" data-action="plan-copy" data-day="${d}" data-slot="${slot}" title="Même recette le lendemain (meal prep)">Copier à ${DAYS[d + 1].toLowerCase()}</button>` : ""}
+        <button type="button" class="link-btn" data-action="plan-clear" data-day="${d}" data-slot="${slot}">Retirer</button>
+      </span></div>
+    <div class="slot-body">
+      <a href="#/recette/${encodeURIComponent(r.id)}">${tileHtml(r, "mini")}</a>
+      <div><a href="#/recette/${encodeURIComponent(r.id)}" class="slot-name">${esc(r.nom)}</a>
+        <div class="slot-who">${group().concat(state.members.filter((m) => !group().includes(m) && e.who.includes(m.id))).map((m) => {
+          const x = sizes.find((z) => z.id === m.id);
+          return `<button type="button" class="who-chip small" data-action="plan-who" data-day="${d}" data-slot="${slot}" data-member="${esc(m.id)}" aria-pressed="${!!x}">
+            <span class="avatar" aria-hidden="true">${esc(m.emoji)}</span><b>${x ? `×${num(x.size, x.size % 1 ? 2 : 0)} · ${num(stats(r).macros[0] * x.size)} kcal` : esc(m.nom)}</b></button>`;
+        }).join("")}</div>
+      </div>
+    </div>
+    ${picking ? pickerHtml(d, slot) : ""}
+  </div>`;
+}
+
+function viewWeek() {
+  const members = group();
+  const d = ui.planDay ?? today();
+  const gaps = C.planGaps(state.plan, members);
+  const missing = Object.values(gaps).reduce((a, b) => a + b, 0);
+  const required = members.reduce((a, m) => a + C.slotsFor(m.repas || 3).length * 7, 0);
+  const planned = Object.values(state.plan).reduce((a, x) => a + Object.keys(x).length, 0);
+  const menuList = menuEntries();
+  return `<div class="page-head"><h1>Ma semaine</h1><span class="muted">${planned} repas planifié${planned > 1 ? "s" : ""}</span></div>
+    ${groupPicker()}
+    <div class="week-summary">
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${required}" aria-valuenow="${required - missing}"><i style="width:${required ? ((required - missing) / required) * 100 : 0}%"></i></div>
+      <p><b>${missing ? `Il manque ${missing} repas pour remplir la semaine` : "✓ Tous les repas de la semaine sont prévus"}</b>
+        ${members.length > 1 && missing ? ` · ${members.map((m) => `${esc(m.emoji)} ${esc(m.nom)} : ${gaps[m.id]}`).join(" · ")}` : ""}</p>
+    </div>
+    <div class="week-strip" role="tablist" aria-label="Jours de la semaine">${DAYS.map((name, i) => {
+      const need = members.reduce((a, m) => a + C.slotsFor(m.repas || 3).length, 0);
+      const have = members.reduce((a, m) => a + C.slotsFor(m.repas || 3).filter((s) => slotEntry(i, s)?.who.includes(m.id)).length, 0);
+      const sporty = members.filter((m) => isSportDay(m, i));
+      return `<button type="button" role="tab" class="day-tab${i === today() ? " today" : ""}" data-action="plan-day" data-day="${i}" aria-selected="${i === d}">
+        <b>${name.slice(0, 3)}</b><span class="day-sport">${sporty.length ? `🏋️${sporty.length > 1 ? sporty.length : ""}` : "&nbsp;"}</span>
+        <span class="day-fill"><i style="width:${need ? (have / need) * 100 : 0}%"></i></span></button>`;
+    }).join("")}</div>
+    <div class="two-cols week-cols">
+      <div>
+        <h2 class="day-title">${DAYS[d]}${d === today() ? " · aujourd'hui" : ""} ${members.filter((m) => isSportDay(m, d)).map((m) => `<span class="sport-badge">🏋️ ${esc(m.nom)}</span>`).join("")}</h2>
+        ${daySlots(d).map((slot) => slotHtml(d, slot)).join("")}
+      </div>
+      <aside class="panel sticky">
+        <h2>Apports du ${DAYS[d].toLowerCase()}</h2>
+        ${members.map((m) => {
+          const t = targets(m, d).daily;
+          const it = dayIntake(m, d);
+          const left = C.slotsFor(m.repas || 3).filter((s) => !slotEntry(d, s)?.who.includes(m.id)).length;
+          return `<div class="member-intake">
+            <div class="mi-head"><span>${esc(m.emoji)} <b>${esc(m.nom)}</b> ${t ? `<small class="muted">${isSportDay(m, d) ? "· sport" : "· repos"}</small>` : ""}</span>
+              <span>${num(it.macros[0])}${t ? ` / ${num(t.kcal)}` : ""} kcal</span></div>
+            ${t ? `<div class="bar kcal" role="img" aria-label="Énergie : ${num(it.macros[0])} sur ${num(t.kcal)} kcal"><i style="width:${Math.min(100, (it.macros[0] / t.kcal) * 100)}%"></i></div>` : ""}
+            ${macroBars(it.macros, t)}
+            <p class="hint">${left ? `${left} repas à prévoir ce jour-là` : "✓ Journée complète"} · ${euro(it.cost)}${t ? "" : ` · <a href="#/profil/${encodeURIComponent(m.id)}">compléter le profil</a>`}</p>
+          </div>`;
+        }).join("")}
+        <a class="btn primary block" href="#/courses" style="margin-top:12px">Faire les courses de la semaine →</a>
+        ${planned ? `<button type="button" class="link-btn" data-action="plan-reset" style="margin-top:8px">Vider la semaine</button>` : ""}
+      </aside>
+    </div>
+    ${menuList.length ? menuListHtml(menuList) : ""}`;
+}
+
 function menuEntries() {
   return Object.keys(state.menu).map((id) => recipeById(id)).filter(Boolean).map((r) => ({ r, res: compute(r) }));
 }
 
-function viewMenu() {
-  const entries = menuEntries();
-  const { meal } = targets();
-  if (!entries.length) {
-    return `<div class="page-head"><h1>Mon menu</h1></div>
-      <div class="empty"><div class="big-emoji">📅</div><p>Votre menu est vide. Ajoutez des recettes avec le bouton <strong>+</strong>.</p>
-      <a class="btn primary" href="#/">Choisir des recettes</a></div>`;
-  }
-  let cost = 0, portions = 0;
-  const macros = [0, 0, 0, 0];
-  for (const { res } of entries) {
-    cost += res.cost;
-    portions += res.serving.p;
-    res.macros.forEach((v, i) => (macros[i] += v));
-  }
-  const avg = macros.map((v) => v / portions);
-  return `<div class="page-head"><h1>Mon menu</h1><span class="muted">${entries.length} recette${entries.length > 1 ? "s" : ""} · ${portionsLabel(portions)}</span></div>
-    <div class="two-cols">
-      <div class="menu-list">${entries.map(({ r, res }) => `
-        <article class="menu-item">
-          <a href="#/recette/${encodeURIComponent(r.id)}">${tileHtml(r)}</a>
-          <div>
-            <a href="#/recette/${encodeURIComponent(r.id)}"><div class="card-title">${esc(r.nom)}</div></a>
-            <div class="card-meta"><span>${euro(res.perPortion.cost)}/pers.</span><span class="prot">💪 ${num(res.perPortion.macros[1])} g</span><span>${num(res.perPortion.macros[0])} kcal</span>${res.serving.sizes.length ? `<span title="Personnes servies">${res.serving.sizes.map((x) => esc(memberById(x.id).emoji)).join("")}${res.serving.guests ? ` +${res.serving.guests}` : ""}</span>` : ""}</div>
-          </div>
-          <div class="menu-side">
-            ${stepperHtml(res.serving.who ? "guests" : "servings", r.id, portionsLabel(res.serving.p), "small")}
-            <button class="link-btn" data-action="toggle-menu" data-id="${esc(r.id)}">Retirer</button>
-          </div>
-        </article>`).join("")}
-      </div>
-      <aside class="panel sticky">
-        <h2>Bilan du menu</h2>
-        <div class="total-line big"><span>Total</span><span>${euro(cost)}</span></div>
-        <div class="total-line"><span>Par personne et par repas</span><span>${euro(cost / portions)}</span></div>
-        <h3 style="font-size:1rem;margin:14px 0 4px">En moyenne, par repas</h3>
-        <div class="total-line"><span>Énergie</span><span>${num(avg[0])} kcal${meal ? ` / ${num(meal.kcal)}` : ""}</span></div>
-        ${macroBars(avg, meal)}
-        ${meal ? "" : `<p class="hint"><a href="#/profil">Renseignez votre profil</a> pour comparer à vos besoins.</p>`}
-        <a class="btn primary block" href="#/courses" style="margin-top:14px">Faire les courses →</a>
-      </aside>
-    </div>`;
+// Recettes ajoutées avec + mais pas encore placées dans la semaine : elles comptent aussi dans les courses
+function menuListHtml(entries) {
+  return `<section class="menu-extra">
+    <h2>Recettes hors planning <small class="muted">· ${entries.length}</small></h2>
+    <p class="muted">Ajoutées avec <b>+</b> : placez-les dans un repas (« + Choisir une recette » les propose en premier), ou gardez-les telles quelles : elles sont comptées dans les courses.</p>
+    <div class="menu-list">${entries.map(({ r, res }) => `
+      <article class="menu-item">
+        <a href="#/recette/${encodeURIComponent(r.id)}">${tileHtml(r)}</a>
+        <div>
+          <a href="#/recette/${encodeURIComponent(r.id)}"><div class="card-title">${esc(r.nom)}</div></a>
+          <div class="card-meta"><span>${euro(res.perPortion.cost)}/pers.</span><span class="prot">💪 ${num(res.perPortion.macros[1])} g</span><span>${num(res.perPortion.macros[0])} kcal</span>${res.serving.sizes.length ? `<span title="Personnes servies">${res.serving.sizes.map((x) => esc(memberById(x.id).emoji)).join("")}${res.serving.guests ? ` +${res.serving.guests}` : ""}</span>` : ""}</div>
+        </div>
+        <div class="menu-side">
+          ${stepperHtml(res.serving.who ? "guests" : "servings", r.id, portionsLabel(res.serving.p), "small")}
+          <button class="link-btn" data-action="toggle-menu" data-id="${esc(r.id)}">Retirer</button>
+        </div>
+      </article>`).join("")}
+    </div>
+  </section>`;
 }
 
 // Placard (huile, sel, épices…) et ingrédients facultatifs : comptés dans la recette, mais hors panier
@@ -658,7 +812,7 @@ const skippedInCart = (x) => isSkippable(x) && !state.pantryBuy.includes(pantryK
 const cartLines = (lines) => lines.filter((x) => !skippedInCart(x));
 
 function menuShopping() {
-  const entries = menuEntries();
+  const entries = [...planEntries(), ...menuEntries()];
   const lines = entries.flatMap(({ res }) => res.lines);
   // ce qui reste au placard, regroupé par nom
   const pantry = new Map();
@@ -678,7 +832,7 @@ function viewCourses() {
   const { entries, list, pantry } = menuShopping();
   if (!entries.length) {
     return `<div class="page-head"><h1>Courses</h1></div>
-      <div class="empty"><div class="big-emoji">🛒</div><p>Ajoutez des recettes à votre menu : la liste de courses se fait toute seule.</p>
+      <div class="empty"><div class="big-emoji">🛒</div><p>Planifiez votre semaine ou ajoutez des recettes avec <b>+</b> : la liste de courses se fait toute seule.</p>
       <a class="btn primary" href="#/">Choisir des recettes</a></div>`;
   }
   const groups = new Map();
@@ -689,7 +843,7 @@ function viewCourses() {
   }
   const toBuy = list.filter((e) => !e.owned);
   const total = toBuy.reduce((s, e) => s + e.price, 0);
-  return `<div class="page-head"><h1>Courses</h1><span class="muted">${entries.length} recette${entries.length > 1 ? "s" : ""} · ${list.length} produits</span></div>
+  return `<div class="page-head"><h1>Courses</h1><span class="muted">${entries.length} repas et recettes · ${list.length} produits</span></div>
     <div class="two-cols">
       <div>
         <p class="muted">Cochez ce que vous avez déjà : ce ne sera pas ajouté au panier.</p>
@@ -806,7 +960,7 @@ function dislikeOptions() {
 function viewMember(id) {
   const p = state.members.find((x) => x.id === id);
   if (!p) return notFound();
-  const { daily, meal } = targets(p);
+  const { daily, meal } = targets(p, null);
   const seg = (field, options) => `<div class="segmented" role="group">${options.map(([v, l]) =>
     `<button type="button" data-action="member" data-id="${esc(p.id)}" data-field="${field}" data-value="${v}" aria-pressed="${String(p[field]) === String(v)}">${l}</button>`).join("")}</div>`;
   const pr = p.prefs;
@@ -831,6 +985,11 @@ function viewMember(id) {
             <label class="field">Taille (cm)<input id="profil-taille" type="number" inputmode="numeric" min="80" max="230" data-action="member-input" data-id="${esc(p.id)}" data-field="taille" value="${esc(p.taille)}" placeholder="178"></label>
             <div class="field">Repas par jour ${seg("repas", [[2, "2"], [3, "3"], [4, "4"], [5, "5"]])}</div>
           </div>
+        </div>
+        <div class="panel">
+          <h2>Jours de sport</h2>
+          <div class="chips-select">${DAYS.map((d, i) => `<button type="button" class="chip" data-action="member-sport" data-id="${esc(p.id)}" data-value="${i}" aria-pressed="${(p.sportDays || []).includes(i)}">${d.slice(0, 3)}</button>`).join("")}</div>
+          <p class="hint">Les jours de sport, l'énergie (surtout les glucides) monte un peu ; les jours de repos, elle baisse d'autant : le total de la semaine ne change pas. Les protéines restent les mêmes chaque jour.</p>
         </div>
         <div class="panel">
           <h2>Activité</h2>
@@ -877,7 +1036,13 @@ function viewMember(id) {
             <div class="kpi"><b>${num(daily.glucides)} g</b><span>glucides</span></div>
             <div class="kpi"><b>${num(daily.lipides)} g</b><span>lipides</span></div>
           </div>
-          <h3 style="font-size:1rem;margin:16px 0 4px">Par repas (${p.repas || 3} par jour)</h3>
+          ${(p.sportDays || []).length && p.sportDays.length < 7 ? (() => {
+            const sp = C.memberDaily(p, p.sportDays[0]);
+            const rest = C.memberDaily(p, [0, 1, 2, 3, 4, 5, 6].find((d) => !p.sportDays.includes(d)));
+            return `<div class="total-line"><span>🏋️ Jour de sport</span><span>${num(sp.kcal)} kcal · ${num(sp.glucides)} g gluc.</span></div>
+              <div class="total-line"><span>🛋️ Jour de repos</span><span>${num(rest.kcal)} kcal · ${num(rest.glucides)} g gluc.</span></div>`;
+          })() : ""}
+          <h3 style="font-size:1rem;margin:16px 0 4px">Par repas (${p.repas || 3} par jour, en moyenne)</h3>
           <div class="total-line"><span>Énergie</span><span>${num(meal.kcal)} kcal</span></div>
           <div class="total-line"><span>Protéines</span><span>${num(meal.proteines)} g</span></div>
           <p class="hint">Métabolisme de base ${num(daily.bmr)} kcal (formule de Mifflin-St Jeor), dépense estimée ${num(daily.tdee)} kcal.
@@ -1065,7 +1230,7 @@ const ROUTES = [
   [/^#?\/?$/, () => viewRecipes(), "recettes"],
   [/^#\/recette\/(.+)$/, (m) => viewRecipe(decodeURIComponent(m[1])), "recettes"],
   [/^#\/cuisine\/(.+)$/, (m) => viewCook(decodeURIComponent(m[1])), "recettes"],
-  [/^#\/menu$/, () => viewMenu(), "menu"],
+  [/^#\/menu$/, () => viewWeek(), "menu"],
   [/^#\/courses$/, () => viewCourses(), "courses"],
   [/^#\/profil$/, () => viewProfil(), "profil"],
   [/^#\/profil\/(.+)$/, (m) => viewMember(decodeURIComponent(m[1])), "profil"],
@@ -1133,7 +1298,8 @@ function render({ keepScroll = false } = {}) {
 }
 
 function updateCounts() {
-  $("#menu-count").textContent = Object.keys(state.menu).length || "";
+  const n = Object.keys(state.menu).length + Object.values(state.plan || {}).reduce((a, x) => a + Object.keys(x).length, 0);
+  $("#menu-count").textContent = n || "";
 }
 
 // ---------- Actions ----------
@@ -1417,6 +1583,16 @@ document.addEventListener("click", (e) => {
     case "tag": ui.tag = el.dataset.tag || null; render({ keepScroll: true }); break;
     case "cook-step": ui.cookStep = Math.max(0, ui.cookStep + +el.dataset.delta); render(); break;
     case "member": updateMember(id, el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
+    case "member-sport": {
+      const m = memberById(id);
+      const d = +el.dataset.value;
+      const set = new Set(m.sportDays || []);
+      if (set.has(d)) set.delete(d); else set.add(d);
+      m.sportDays = [...set].sort();
+      changed();
+      render({ keepScroll: true });
+      break;
+    }
     case "member-pref": toggleMemberPref(id, el.dataset.field, el.dataset.value); render({ keepScroll: true }); break;
     case "member-undislike": toggleMemberPref(id, "deteste", el.dataset.value); render({ keepScroll: true }); break;
     case "add-member": location.hash = `#/profil/${encodeURIComponent(addMember().id)}`; break;
@@ -1444,13 +1620,13 @@ document.addEventListener("click", (e) => {
     }
     case "guide-menu": {
       const { entries, list } = menuShopping();
-      rememberCart(entries.length === 1 ? entries[0].r.nom : `Menu de ${entries.length} recettes`, list);
+      rememberCart(entries.length === 1 ? entries[0].r.nom : `Ma semaine (${entries.length} repas)`, list);
       location.hash = "#/panier-guide";
       break;
     }
     case "send-menu": {
       const { entries, list } = menuShopping();
-      sendToCart(entries.length === 1 ? entries[0].r.nom : `Menu de ${entries.length} recettes`, list);
+      sendToCart(entries.length === 1 ? entries[0].r.nom : `Ma semaine (${entries.length} repas)`, list);
       break;
     }
     case "save-draft": saveDraft(); break;
@@ -1464,6 +1640,47 @@ document.addEventListener("click", (e) => {
       render({ keepScroll: true });
       break;
     }
+    case "plan-day": ui.planDay = +el.dataset.day; ui.pick = null; render({ keepScroll: true }); break;
+    case "plan-pick": ui.pick = `${el.dataset.day}|${el.dataset.slot}`; ui.pickQuery = ""; render({ keepScroll: true }); $("#pick-search")?.focus(); break;
+    case "plan-cancel": ui.pick = null; render({ keepScroll: true }); break;
+    case "plan-set": {
+      const d = +el.dataset.day, slot = el.dataset.slot;
+      const prev = slotEntry(d, slot);
+      state.plan[d] = { ...(state.plan[d] || {}), [slot]: { id, who: prev ? prev.who : defaultWho(d, slot) } };
+      if (state.menu[id]) delete state.menu[id]; // placée : elle n'est plus « hors planning »
+      ui.pick = null;
+      save();
+      render({ keepScroll: true });
+      break;
+    }
+    case "plan-clear": {
+      const d = +el.dataset.day;
+      delete state.plan[d][el.dataset.slot];
+      save();
+      render({ keepScroll: true });
+      break;
+    }
+    case "plan-copy": {
+      const d = +el.dataset.day, slot = el.dataset.slot;
+      state.plan[d + 1] = { ...(state.plan[d + 1] || {}), [slot]: { ...slotEntry(d, slot), who: [...slotEntry(d, slot).who] } };
+      save();
+      toast(`Copié à ${DAYS[d + 1].toLowerCase()}.`);
+      render({ keepScroll: true });
+      break;
+    }
+    case "plan-who": {
+      const e = slotEntry(+el.dataset.day, el.dataset.slot);
+      const mid = el.dataset.member;
+      const next = e.who.includes(mid) ? e.who.filter((x) => x !== mid) : [...e.who, mid];
+      if (!next.length) { toast("Au moins une personne pour ce repas."); break; }
+      e.who = state.members.map((m) => m.id).filter((x) => next.includes(x));
+      save();
+      render({ keepScroll: true });
+      break;
+    }
+    case "plan-reset":
+      if (confirm("Vider tous les repas de la semaine ?")) { state.plan = {}; save(); render(); }
+      break;
     case "group-member": {
       const set = new Set(group().map((m) => m.id));
       const mid = el.dataset.member;
@@ -1601,6 +1818,7 @@ document.addEventListener("input", (e) => {
   else if (el.dataset.action === "foyer-input") { state.foyer[el.dataset.field] = el.value; changed(); rerenderSoon(); }
   else if (el.dataset.action === "draft") { state.draft[el.dataset.field] = el.value; save(); previewSoon(); }
   else if (el.dataset.action === "ing-query") { ui.ingQuery = el.value; suggestSoon(); }
+  else if (el.dataset.action === "pick-query") { ui.pickQuery = el.value; rerenderSoon(); }
   else if (el.dataset.action === "ing-qty") {
     // la quantité remplace le nombre en tête de ligne ; on garde l'unité, le nom et le produit choisi
     const lines = draftLines(state.draft);

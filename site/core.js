@@ -318,6 +318,52 @@ const Core = (() => {
     return { kcal: daily.kcal / meals, proteines: daily.proteines / meals, glucides: daily.glucides / meals, lipides: daily.lipides / meals };
   }
 
+  // Jours de sport : un peu plus d'énergie (en glucides) les jours d'entraînement, un peu moins les jours
+  // de repos, avec le même total sur la semaine. Protéines et lipides ne changent pas.
+  const SPORT_SWING = 0.12;
+  function dayTargets(daily, sportDays = 0, isSport = false) {
+    if (!daily || !(sportDays > 0) || sportDays >= 7) return daily;
+    const delta = daily.kcal * SPORT_SWING;
+    const kcal = Math.round(daily.kcal + (isSport ? (delta * (7 - sportDays)) / 7 : (-delta * sportDays) / 7));
+    const glucides = Math.max(0, Math.round((kcal - daily.proteines * 4 - daily.lipides * 9) / 4));
+    return { ...daily, kcal, glucides, sport: isSport };
+  }
+  // Besoins d'un membre pour un jour de la semaine (0 = lundi), ou en moyenne si day est null
+  function memberDaily(m, day = null) {
+    const daily = dailyTargets(m);
+    const days = m.sportDays || [];
+    return day == null ? daily : dayTargets(daily, days.length, days.includes(day));
+  }
+
+  // Créneaux de repas d'une journée, selon le nombre de repas de chacun
+  const SLOTS = {
+    "petit-dej": { label: "Petit-déjeuner", icon: "☕" },
+    dejeuner: { label: "Déjeuner", icon: "🍽️" },
+    collation: { label: "Collation", icon: "🍎" },
+    diner: { label: "Dîner", icon: "🌙" },
+    soir: { label: "En-cas du soir", icon: "🥛" },
+  };
+  const SLOTS_BY_MEALS = {
+    2: ["dejeuner", "diner"], 3: ["petit-dej", "dejeuner", "diner"],
+    4: ["petit-dej", "dejeuner", "collation", "diner"], 5: ["petit-dej", "dejeuner", "collation", "diner", "soir"],
+  };
+  const slotsFor = (meals) => SLOTS_BY_MEALS[meals] || SLOTS_BY_MEALS[3];
+
+  // Repas manquants de la semaine : pour chaque membre, les créneaux de ses jours sans recette pour lui
+  function planGaps(plan, members) {
+    const out = {};
+    for (const m of members) {
+      out[m.id] = 0;
+      for (let d = 0; d < 7; d++) {
+        for (const slot of slotsFor(m.repas || 3)) {
+          const e = plan[d] && plan[d][slot];
+          if (!e || !(e.who || []).includes(m.id)) out[m.id]++;
+        }
+      }
+    }
+    return out;
+  }
+
   // Portions pour atteindre les kcal d'un repas, au quart de portion près. Au-delà de ×2, la recette est
   // trop légère pour faire un repas seule : mieux vaut l'accompagner que de la tripler (18 œufs…).
   const MAX_SIZE = 2;
@@ -422,9 +468,9 @@ const Core = (() => {
   }
 
   // Portion de chaque membre pour une recette : calée sur son repas idéal (ou standard sans objectif)
-  function memberPortions(kcalPerPortion, members) {
+  function memberPortions(kcalPerPortion, members, day = null) {
     return members.map((m) => {
-      const daily = dailyTargets(m);
+      const daily = memberDaily(m, day);
       const meal = daily ? mealTarget(daily, m.repas || 3) : null;
       return { id: m.id, nom: m.nom, size: meal ? portionsForTarget(kcalPerPortion, meal) : 1, meal };
     });
@@ -468,7 +514,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch,
+    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 
