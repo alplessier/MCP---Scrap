@@ -159,7 +159,7 @@ function compute(r, serving = servingOf(r)) {
   const t = C.totals(lines);
   return {
     lines, ...t, serving,
-    perPortion: { cost: t.cost / serving.p, macros: t.macros.map((v) => v / serving.p) },
+    perPortion: { cost: t.cost / serving.p, macros: t.macros.map((v) => v / serving.p), nutriments: t.nutriments.map((v) => v / serving.p), nutrientCoverage: t.nutrientCoverage },
   };
 }
 
@@ -296,6 +296,19 @@ function ingredientGrid(lines) {
     <span class="ing-round">${x.product?.image ? `<img src="${esc(x.product.image)}" alt="" loading="lazy" width="64" height="64">` : "🛍️"}</span>
     ${x.ing.optional ? `<span class="badge-opt">Facultatif</span>` : ""}
     <b>${x.error ? "?" : esc(C.quantityLabel(x.ing))}</b><span>${esc(x.ing.name || x.ing.raw)}</span></li>`).join("")}</ul>`;
+}
+
+// Fibres, sucres, acides gras saturés, sel : quantités, et repères du jour si on les donne (targets)
+function nutrientRows(values, targets = null, coverage = 1) {
+  if (!values) return "";
+  return `<div class="nutrients">${C.NUTRIENT_INFO.map((n, i) => {
+    const v = values[i];
+    const t = targets && targets[i];
+    const state = !t ? "" : n.kind === "min" ? (v >= t ? "ok" : "low") : v > t ? "over" : "ok";
+    return `<div class="nutrient ${state}"><span>${n.label}</span>
+      ${t ? `<div class="bar n" role="img" aria-label="${n.label} : ${num(v, 1)} g, repère ${n.kind === "min" ? "au moins" : "au plus"} ${num(t)} g"><i style="width:${Math.min(100, (v / t) * 100)}%"></i></div>` : ""}
+      <small>${num(v, v < 10 ? 1 : 0)} g${t ? ` / ${n.kind === "min" ? "≥" : "≤"} ${num(t)}` : ""}</small></div>`;
+  }).join("")}${coverage < 0.9 ? `<p class="hint">Nutriments connus pour ${num(coverage * 100)} % des calories : valeurs minimales.</p>` : ""}</div>`;
 }
 
 function ingredientsHtml(lines) {
@@ -556,7 +569,7 @@ function viewRecipe(id) {
             <div class="kpi"><b>${euro(res.cost)}</b><span>pour le repas</span></div>
           </div>
           <details class="fold" data-fold="apports"${foldOpen("apports") ? " open" : ""}>
-          <summary>📊 Apports de chacun <small class="muted">· protéines, glucides, lipides</small></summary>
+          <summary>📊 Apports de chacun <small class="muted">· macros, fibres, sucres, AG saturés, sel</small></summary>
           ${s.sizes.map((x) => {
             const m = memberById(x.id);
             const mac = unit.macros.map((v) => v * x.size);
@@ -564,12 +577,14 @@ function viewRecipe(id) {
               <div class="mi-head"><span><span aria-hidden="true">${esc(m.emoji)}</span> <b>${esc(m.nom)}</b></span>
                 <span>${num(mac[0])} kcal${x.meal ? ` / ${num(x.meal.kcal)}` : ""} · ${euro(unit.cost * x.size)}</span></div>
               ${macroBars(mac, isSnack(r) ? null : x.meal)}
+              ${nutrientRows(res.nutriments.map((v) => (v / total) * x.size), null, res.nutrientCoverage)}
               ${x.meal ? "" : `<p class="hint"><a href="#/profil/${encodeURIComponent(m.id)}">Complétez le profil de ${esc(m.nom)}</a> pour adapter sa portion.</p>`}
             </div>`;
           }).join("")}
           ${!s.sizes.length || s.guests ? `<div class="member-intake">
               <div class="mi-head"><span><b>${s.sizes.length ? `${s.guests} invité${s.guests > 1 ? "s" : ""}` : "Par portion"}</b></span><span>${num(unit.macros[0])} kcal · ${euro(unit.cost)} chacun</span></div>
               ${macroBars(unit.macros, null)}
+              ${nutrientRows(res.nutriments.map((v) => v / total), null, res.nutrientCoverage)}
             </div>` : ""}
           </details>
           ${light.length ? `<p class="hint">Même doublée, cette recette reste légère pour ${esc(light.map((x) => x.nom).join(", "))} : ajoutez un accompagnement (riz, pain, fruit…) ou une collation.</p>` : ""}
@@ -629,16 +644,20 @@ function daySlots(d) {
 // Apports d'un membre sur une journée
 function dayIntake(m, d) {
   const total = [0, 0, 0, 0];
-  let cost = 0;
+  const nutr = [0, 0, 0, 0];
+  let cost = 0, covered = 0;
   for (const slot of Object.keys(state.plan[d] || {})) {
     const e = slotEntry(d, slot);
     const r = e && recipeById(e.id);
     if (!r || !e.who.includes(m.id)) continue;
     const size = entrySizes(r, [m.id], d)[0].size;
-    stats(r).macros.forEach((v, i) => (total[i] += v * size));
-    cost += stats(r).cost * size;
+    const st = stats(r);
+    st.macros.forEach((v, i) => (total[i] += v * size));
+    st.nutriments.forEach((v, i) => (nutr[i] += v * size));
+    covered += st.macros[0] * size * st.nutrientCoverage;
+    cost += st.cost * size;
   }
-  return { macros: total, cost };
+  return { macros: total, nutriments: nutr, coverage: total[0] ? covered / total[0] : 1, cost };
 }
 
 function planEntries() {
@@ -769,6 +788,7 @@ function viewWeek() {
               <span>${num(it.macros[0])}${t ? ` / ${num(t.kcal)}` : ""} kcal</span></div>
             ${t ? `<div class="bar kcal" role="img" aria-label="Énergie : ${num(it.macros[0])} sur ${num(t.kcal)} kcal"><i style="width:${Math.min(100, (it.macros[0] / t.kcal) * 100)}%"></i></div>` : ""}
             ${macroBars(it.macros, t)}
+            ${it.macros[0] ? nutrientRows(it.nutriments, C.nutrientTargets(t), it.coverage) : ""}
             <p class="hint">${left ? `${left} repas à prévoir ce jour-là` : "✓ Journée complète"} · ${euro(it.cost)}${t ? "" : ` · <a href="#/profil/${encodeURIComponent(m.id)}">compléter le profil</a>`}</p>
           </div>`;
         }).join("")}
@@ -1214,6 +1234,7 @@ function viewProducts() {
           <div class="muted" style="font-size:.8rem">${esc(p.conditionnement)}${p.promo ? ` · <span style="color:var(--brand);font-weight:800">${esc(p.promo)}</span>` : ""}</div></div>
         <button type="button" class="btn small add-ing" data-action="add-ing" data-ean="${esc(p.ean)}">+ Ma recette</button>
         <div class="nutri">${m ? `<span>${num(m[0])} kcal</span><span>P ${num(m[1], 1)}</span><span>G ${num(m[2], 1)}</span><span>L ${num(m[3], 1)}</span><span>/ 100 g</span>
+          ${p.nutriments ? C.NUTRIENT_INFO.map((n, i) => (p.nutriments[i] == null ? "" : `<span>${n.label} ${num(p.nutriments[i], 1)}</span>`)).join("") : ""}
           ${density > 0 ? `<span class="ratio" title="Grammes de protéines pour 100 kcal">${num(density, 1)} g prot. / 100 kcal</span>` : ""}
           ${ppe > 0 ? `<span>${num(ppe)} g prot. / €</span>` : ""}` : "<span>macros non renseignées</span>"}</div>
       </article>`;

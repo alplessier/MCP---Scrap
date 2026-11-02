@@ -546,3 +546,16 @@ details.fold > summary small { font-weight: 700; }
 .menu-extra { margin-top: 28px; }
 @media (max-width: 520px) { .day-tab b { font-size: 0.78rem; } .slot-body { grid-template-columns: 48px minmax(0, 1fr); } .tile.mini { width: 48px; height: 48px; font-size: 1.5rem; } }
 .member-intake .bar.kcal { margin: 4px 0 8px; }
+
+/* ---------- Nutriments ---------- */
+.nutrients { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.nutrient { display: grid; grid-template-columns: 92px 1fr auto; gap: 10px; align-items: center; font-size: 0.85rem; font-weight: 700; }
+.nutrient:not(:has(.bar)) { grid-template-columns: 92px auto; }
+.nutrient small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar.n { height: 7px; }
+.bar.n i { background: var(--muted); }
+.nutrient.ok .bar.n i { background: var(--ok); }
+.nutrient.low .bar.n i { background: var(--g); }
+.nutrient.over .bar.n i { background: var(--l); }
+.nutrient.over small { color: var(--l); }
+.nutrients .hint { margin: 2px 0 0; }
