@@ -169,3 +169,15 @@ test("produits : protéines pour 100 kcal, et parcours du catalogue sans recherc
   assert.deepEqual(Core.search(cat, ""), [], "sans recherche ni tri : rien");
   assert.equal(pain.nom, "Pain de mie");
 });
+
+test("placard, ingrédients facultatifs et ingrédients de chaque étape", () => {
+  const opt = Core.parseLine("1 bouquet coriandre (facultatif)");
+  assert.equal(opt.optional, true);
+  assert.equal(opt.name, "bouquet coriandre");
+  assert.equal(Core.parseLine("200 g riz basmati").optional, false);
+  assert.equal(Core.scaleIngredient(opt, 2).optional, true);
+  for (const n of ["huile d'olive", "sel", "sauce soja", "paprika fumé"]) assert.equal(Core.isPantry(n), true, n);
+  for (const n of ["poivron rouge", "gingembre frais", "filet de poulet", "selle d'agneau"]) assert.equal(Core.isPantry(n), false, n);
+  const steps = ["Faites cuire le riz.", "Saisissez le poulet dans l'huile d'olive.", "Servez."];
+  assert.deepEqual(Core.stepIngredients(steps, ["filet de poulet", "riz basmati", "huile d'olive"]), [[1], [0, 2], []]);
+});

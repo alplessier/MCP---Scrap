@@ -412,3 +412,48 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.88em;
 .suggest small { color: var(--muted); font-weight: 700; font-size: 0.78rem; }
 .suggest .plus { width: 32px; height: 32px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; }
 .product .add-ing { grid-column: 1 / -1; justify-self: start; }
+
+/* ---------- Fiche façon Jow : bandeau, grille d'ingrédients, étapes illustrées ---------- */
+.band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--brand-soft); border-radius: var(--radius-s); padding: 12px 6px; margin: 4px 0 14px; text-align: center; }
+.band > div { display: grid; gap: 1px; justify-items: center; }
+.band span { font-size: 1.2rem; }
+.band b { font-family: var(--font-title); font-weight: 600; font-size: 1.02rem; }
+.band small { color: var(--muted); font-weight: 700; font-size: 0.72rem; }
+@media (max-width: 420px) { .band b { font-size: 0.92rem; } }
+.top-actions { margin-bottom: 16px; }
+.ing-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 14px 8px; }
+.ing-grid li { display: grid; justify-items: center; text-align: center; gap: 2px; position: relative; }
+.ing-grid b { font-size: 0.88rem; }
+.ing-grid li > span:last-child { font-size: 0.8rem; color: var(--muted); font-weight: 700; line-height: 1.2; }
+.ing-round { width: 68px; height: 68px; border-radius: 50%; background: #fff; border: 2px solid var(--line); display: grid; place-items: center; overflow: hidden; font-size: 1.6rem; margin-bottom: 4px; }
+.ing-round img { width: 54px; height: 54px; object-fit: contain; }
+.ing-grid li.missing .ing-round { border-style: dashed; }
+.badge-opt { position: absolute; top: 52px; background: #2563eb; color: #fff; font-size: 0.66rem; font-weight: 800; border-radius: 999px; padding: 1px 7px; }
+.pantry-box { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line); text-align: center; display: grid; gap: 8px; justify-items: center; }
+.pantry-box .chips-select { justify-content: center; }
+.pantry-box .hint { margin: 0; }
+.chip.pantry-chip { white-space: normal; font-size: 0.82rem; padding: 5px 12px; }
+.chip.pantry-chip[aria-pressed="false"] { background: var(--surface-2); border-color: transparent; color: var(--muted); }
+.chip.pantry-chip[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.drive-products { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.drive-products summary { cursor: pointer; font-weight: 800; padding: 6px 0; }
+.steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 14px; }
+.steps li { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; }
+.steps small { color: var(--muted); font-weight: 700; font-size: 0.78rem; }
+.steps p { margin: 2px 0 0; }
+.step-img { width: 40px; height: 40px; border-radius: 50%; object-fit: contain; background: #fff; border: 1px solid var(--line); }
+.step-img.ph { display: grid; place-items: center; background: var(--surface-2); font-weight: 800; color: var(--muted); }
+.cook .ing-grid { margin-top: 18px; text-align: center; }
+.awake { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 700; margin-left: auto; margin-right: 10px; }
+.awake input { width: 18px; height: 18px; accent-color: var(--brand); }
+/* Mobile : photo, titre et chiffres clés, pour qui, ingrédients, puis étapes */
+@media (max-width: 860px) {
+  .detail { display: flex; flex-direction: column; }
+  .detail > div { display: contents; }
+  .detail .rec-tile { order: 1; width: 100%; margin-bottom: 16px; }
+  .detail .rec-head { order: 2; }
+  .detail .rec-who { order: 3; }
+  .detail .rec-ingredients { order: 4; margin-top: 0 !important; }
+  .detail .rec-steps { order: 5; }
+  .detail .rec-edit { order: 6; }
+}

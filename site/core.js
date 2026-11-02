@@ -100,13 +100,40 @@ const Core = (() => {
     const qty = parseFloat(m[1].replace(",", "."));
     const unit = (m[2] || "").toLowerCase();
     const pieceWeight = m[4] ? parseFloat(m[4].replace(",", ".")) : null;
-    const ing = { raw, name: m[3].trim(), ean: m[5] || null, grams: null, pieces: null, pieceWeight };
+    // « 1 bouquet coriandre (facultatif) » : ingrédient facultatif, hors panier par défaut
+    let name = m[3].trim();
+    const optional = OPTIONAL_RE.test(name);
+    if (optional) name = name.replace(OPTIONAL_RE, " ").replace(/\s+/g, " ").trim();
+    const ing = { raw, name, ean: m[5] || null, grams: null, pieces: null, pieceWeight, optional };
     if (unit in TO_GRAMS) ing.grams = qty * TO_GRAMS[unit];
     else {
       ing.pieces = qty;
       if (pieceWeight) ing.grams = qty * pieceWeight;
     }
     return ing;
+  }
+
+  const OPTIONAL_RE = /\(?\s*\b(?:facultati(?:f|ve)|optionnel(?:le)?)\b\s*\)?/i;
+
+  // Le placard : ce qu'on a presque toujours chez soi. Compté dans la recette, mais pas ajouté au panier par défaut.
+  const PANTRY = ["huile", "sel", "poivre", "vinaigre", "sauce soja", "moutarde", "levure chimique", "bicarbonate",
+    "extrait vanille", "sucre vanille", "curry", "paprika", "cumin", "cannelle", "curcuma", "piment", "herbes provence",
+    "origan", "thym", "muscade", "gingembre poudre", "ail poudre", "bouillon", "laurier"].map((k) => words(k));
+  function isPantry(name) {
+    const w = words(name || "");
+    return PANTRY.some((k) => k.every((t) => w.includes(t)));
+  }
+
+  // Ingrédients cités par chaque étape (pour les vignettes à côté des étapes). Les mots trop vagues ne comptent pas.
+  const VAGUE = new Set(["filet", "blanc", "pate", "sauce", "poudre", "frais", "fraiche", "hache", "hachee", "morceau",
+    "tranche", "boite", "cuillere", "jus", "nature", "entier", "entiere", "petit", "petite", "gros", "grosse", "surgele"]);
+  function stepIngredients(steps, names) {
+    const keys = names.map((n) => queryTokens(n || "").filter((t) => t.length >= 3 && !VAGUE.has(t)));
+    return steps.map((st) => {
+      const w = words(st).map(stem);
+      return keys.map((ks, i) => (ks.some((t) => w.some((x) => x.startsWith(t) || (x.length >= 4 && t.startsWith(x)))) ? i : -1))
+        .filter((i) => i >= 0);
+    });
   }
 
   const parseLines = (text) => text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"));
@@ -429,7 +456,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl,
+    encode, decode, cartUrl, isPantry, stepIngredients,
   };
 })();
 

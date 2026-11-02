@@ -19,7 +19,7 @@ Inspiré de la simplicité de Jow, avec en plus la partie nutrition et sport :
 | Page | Contenu |
 |---|---|
 | **Recettes** | 123 recettes sportives (`site/recettes.json`) en grandes cartes : prix par personne, protéines, kcal. Filtres (Perte de gras, Prise de muscle, Gourmand, Protéiné, Après la séance, Petit-déj, Collation & dessert, Meal prep, Végétarien, Moins de 20 min, Petit budget) et recherche. Le bouton **+** ajoute au menu. Avec un profil, l'accueil affiche **le top 3 pour vous** dans chaque filtre et les filtres sont triés par pertinence. |
-| **Fiche recette** | **« Pour qui ? »** : on coche les profils du foyer (et des invités) ; chacun reçoit la portion de son objectif, ses apports (kcal, protéines, glucides, lipides, coût) sont comparés à son repas idéal, et les quantités comme le panier suivent. Ingrédients avec la photo du produit, produits du Drive modifiables, mode **« Passer en cuisine »** étape par étape. |
+| **Fiche recette** | Bandeau des chiffres clés (temps, kcal et protéines par personne, prix), ingrédients en vignettes rondes, **« Pour qui ? »** : on coche les profils du foyer (et des invités) ; chacun reçoit la portion de son objectif, ses apports sont comparés à son repas idéal, et les quantités comme le panier suivent. **« Vous avez sûrement déjà… »** : huile, sel, épices, sauce soja… et ingrédients `(facultatif)` comptés dans les macros mais hors panier, sauf si on les demande. Étapes illustrées par l'ingrédient utilisé ; choix des produits du Drive dans un volet. Mode **« Passer en cuisine »** étape par étape, avec les ingrédients de l'étape et l'écran qui reste allumé. |
 | **Menu** | Les recettes de la semaine, leurs couverts, le coût total et la moyenne des macros par repas. |
 | **Courses** | Liste regroupée par rayon, en paquets entiers ; cochez ce que vous avez déjà, puis **un bouton** envoie tout au panier Carrefour. |
 | **Profil** | Le **foyer** : seul, en couple ou en famille, plusieurs profils (membres présents ou non). Chaque membre : âge, poids, taille, activité, objectif (sèche, recomposition, maintien, prise de masse), repas par jour → besoins en kcal et en macros (Mifflin-St Jeor) ; allergies et intolérances (14 allergènes majeurs simplifiés à 10), régime (végétarien, pescétarien, végétalien, sans porc), petit-déjeuner sucré ou salé, ingrédients détestés (liste déroulante). Pour le foyer : budget par jour et par personne, temps de cuisine par jour, matériel disponible. Les recettes incompatibles avec un membre présent sont masquées ; budget, temps et goût du petit-déjeuner font baisser la note ; chaque fiche propose « Adapter au foyer » avec la portion de chacun. |
@@ -68,6 +68,7 @@ quantités s'ajoutent à ce qui est déjà au panier, et les produits indisponib
 |---|---|
 | `200 g blanc de poulet` | quantité en `g`, `kg`, `ml`, `cl` ou `l` (1 ml est compté comme 1 g pour les macros) |
 | `2 oeufs @60g` | pièces, avec le poids d'une pièce (nécessaire pour les macros) |
+| `1 bouquet coriandre (facultatif)` | ingrédient facultatif : affiché avec un badge, pas ajouté au panier par défaut |
 | `3 avocats` | pièces : le prix est calculé si le produit est vendu à la pièce |
 | `100 g skyr #3560070945252` | impose un produit précis par son code-barres |
 
