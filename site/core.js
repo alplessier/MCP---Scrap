@@ -38,11 +38,19 @@ const Core = (() => {
       return p;
     });
     const byEan = new Map(products.map((p) => [p.ean, p]));
+    // formats d'un même produit (boîte de 6 / de 12, 500 g / 1 kg) : même nom, même marque, même unité
+    const formats = new Map();
+    for (const p of products) {
+      if (!(p.prix > 0 && p.prix_unite > 0)) continue;
+      const k = formatKey(p);
+      if (!formats.has(k)) formats.set(k, []);
+      formats.get(k).push(p);
+    }
     // valeurs génériques : 4 macros, puis (si connus) fibres, sucres, acides gras saturés et sel
     const generic = Object.entries(data.generique).map(([k, m]) => ({
       tokens: queryTokens(k), macros: m.slice(0, 4), nutriments: m.length >= 8 ? m.slice(4, 8) : null,
     }));
-    return { maj: data.maj, magasin: data.magasin, products, byEan, generic };
+    return { maj: data.maj, magasin: data.magasin, products, byEan, generic, formats };
   }
 
   // Sans recherche, un tri autre que « pertinence » parcourt tout le catalogue (ou un rayon) :
@@ -183,6 +191,10 @@ const Core = (() => {
     return top;
   }
 
+  // Clé des formats d'un même produit : même nom exact (chiffres compris : « 5 % MG » ≠ « 15 % MG »), même marque
+  // et même unité de prix. Chez Carrefour, la quantité est dans le conditionnement, pas dans le nom.
+  const formatKey = (p) => [normalize(p.marque || ""), p.unite, words(p.nom).join(" ")].join("|");
+
   // Paquets entiers à acheter (tolérance de 2 % pour les arrondis du prix au kilo affiché)
   function packsFor(p, used) {
     const pack = p.prix / p.prix_unite;
@@ -262,7 +274,10 @@ const Core = (() => {
 
   // Un même produit sur plusieurs lignes ou recettes : on additionne avant de compter les paquets
   // (200 g + 100 g de skyr tiennent dans un seul pot de 800 g).
-  function shoppingList(results, { exclude = new Set() } = {}) {
+  // Avec cat : les formats d'un même produit sont regroupés et on retient la combinaison de paquets la
+  // moins chère pour la quantité totale (12 œufs : une boîte de 12 plutôt que deux de 6). keep : familles
+  // (formatKey) dont on garde les formats choisis.
+  function shoppingList(results, { exclude = new Set(), cat = null, keep = new Set() } = {}) {
     const byEan = new Map();
     for (const r of results) {
       if (!r.product || r.used == null) continue;
@@ -271,10 +286,62 @@ const Core = (() => {
       entry.uses.push(r.ing.raw);
       byEan.set(r.product.ean, entry);
     }
-    return [...byEan.values()].map((e) => {
+    const plain = (e) => {
       const packs = packsFor(e.product, e.used);
       return { ...e, packs, price: packs * e.product.prix, owned: exclude.has(e.product.ean) };
-    });
+    };
+    if (!cat || !cat.formats) return [...byEan.values()].map(plain);
+    const families = new Map();
+    for (const e of byEan.values()) {
+      const k = formatKey(e.product);
+      if (!families.has(k)) families.set(k, []);
+      families.get(k).push(e);
+    }
+    const out = [];
+    for (const [k, entries] of families) {
+      const options = cat.formats.get(k) || [];
+      const before = entries.map(plain);
+      if (options.length < 2 || keep.has(k) || entries.some((e) => exclude.has(e.product.ean))) { out.push(...before); continue; }
+      const used = entries.reduce((a, e) => a + e.used, 0);
+      const plan = cheapestPacks(options, used);
+      const beforePrice = before.reduce((a, e) => a + e.price, 0);
+      const afterPrice = plan ? plan.reduce((a, x) => a + x.packs * x.product.prix, 0) : Infinity;
+      if (!(afterPrice < beforePrice - 0.005)) { out.push(...before); continue; }
+      const uses = entries.flatMap((e) => e.uses);
+      const description = before.map((e) => `${e.packs} × ${e.product.conditionnement || "paquet"}`).join(" + ");
+      plan.forEach((x, i) => out.push({
+        product: x.product, used: x.used, uses, packs: x.packs, price: x.packs * x.product.prix, owned: false,
+        optimized: i === 0 ? { key: k, before: description, saving: beforePrice - afterPrice } : { key: k, saving: 0, part: true },
+      }));
+    }
+    return out;
+  }
+
+  // Combinaison de paquets (formats d'un même produit) la moins chère couvrant la quantité voulue
+  // (en kg / L ou en pièces). À coût égal : le moins de reste, puis le moins de paquets.
+  function cheapestPacks(options, used) {
+    const piece = options[0].unite === "PIECE";
+    const scale = piece ? 1 : 1000; // grammes (ou ml) pour travailler en entiers
+    const need = Math.max(1, Math.ceil(used * scale * 0.98)); // même tolérance de 2 % que packsFor
+    const sizes = options.map((p) => Math.round((p.prix / p.prix_unite) * scale)).map((x) => Math.max(1, x));
+    if (need > 50000) return null;
+    // best[n] : coût minimal pour avoir au moins n unités ; choice[n] : format retenu
+    const best = new Float64Array(need + 1).fill(Infinity);
+    const qty = new Float64Array(need + 1);
+    const choice = new Int32Array(need + 1).fill(-1);
+    best[0] = 0;
+    for (let n = 1; n <= need; n++) {
+      for (let i = 0; i < options.length; i++) {
+        const prev = Math.max(0, n - sizes[i]);
+        const c = best[prev] + options[i].prix;
+        const q = qty[prev] + sizes[i];
+        if (c < best[n] - 1e-9 || (Math.abs(c - best[n]) < 1e-9 && q < qty[n])) { best[n] = c; qty[n] = q; choice[n] = i; }
+      }
+    }
+    const count = new Map();
+    for (let n = need; n > 0; n = Math.max(0, n - sizes[choice[n]])) count.set(choice[n], (count.get(choice[n]) || 0) + 1);
+    const total = [...count].reduce((a, [i, c]) => a + sizes[i] * c, 0);
+    return [...count].map(([i, packs]) => ({ product: options[i], packs, used: (used * sizes[i] * packs) / total }));
   }
 
   // ---------- Objectifs sportifs ----------
@@ -540,7 +607,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
+    encode, decode, cartUrl, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 

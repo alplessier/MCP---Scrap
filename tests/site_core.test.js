@@ -230,3 +230,39 @@ test("nutriments : ceux du produit, sinon les valeurs moyennes, et repères du j
   assert.equal(Math.round(t.nutrientCoverage * 100), 80);           // le poulet (115 kcal sur 585) n'est pas couvert
   assert.deepEqual(Core.nutrientTargets({ kcal: 2400 }), [30, 100, 32, 6]);
 });
+
+test("formats : quantités additionnées puis paquets les moins chers parmi les formats du même produit", () => {
+  const cat = Core.loadCatalogue({
+    maj: "2026-11-03", magasin: { ref: "575", nom: "Drive Test" },
+    colonnes: ["ean", "nom", "marque", "prix", "prix_unite", "unite", "conditionnement", "macros"],
+    produits: [
+      ["30000006", "Œufs Bio CARREFOUR BIO", "CARREFOUR BIO", 2.39, 0.398, "PIECE", "la boite de 6", null],
+      ["30000012", "Œufs Bio CARREFOUR BIO", "CARREFOUR BIO", 3.99, 0.3325, "PIECE", "la boite de 12", null],
+      ["30000250", "Haricots rouges CARREFOUR CLASSIC'", "CARREFOUR CLASSIC'", 0.75, 3, "KG", "la boite de 250g", null],
+      ["30000500", "Haricots rouges CARREFOUR CLASSIC'", "CARREFOUR CLASSIC'", 1.45, 2.9, "KG", "la boite de 500g", null],
+      ["30001000", "Haricots rouges CARREFOUR CLASSIC'", "CARREFOUR CLASSIC'", 2.4, 2.4, "KG", "la boite de 1kg", null],
+      ["30009999", "Haricots rouges D'AUCY", "D'AUCY", 1.99, 3.98, "KG", "la boite de 500g", null],
+    ],
+    generique: {},
+  });
+  // deux recettes : 6 œufs puis 6 œufs (boîte de 6 choisie), 400 g puis 400 g de haricots (boîte de 500 g)
+  const lines = Core.computeLines(cat, ["6 oeufs #30000006", "6 oeufs #30000006", "400 g haricots rouges #30000500", "400 g haricots rouges #30000500"]);
+  const plainList = Core.shoppingList(lines);
+  assert.deepEqual(plainList.map((e) => [e.product.ean, e.packs]), [["30000006", 2], ["30000500", 2]]); // sans optimisation
+  const list = Core.shoppingList(lines, { cat });
+  assert.deepEqual(list.map((e) => [e.product.ean, e.packs]), [["30000012", 1], ["30001000", 1]]);
+  assert.equal(list[0].optimized.before, "2 × la boite de 6");
+  assert.equal(Math.round(list[1].optimized.saving * 100), 50); // 2 × 1,45 → 2,40
+  // un autre produit (autre marque) n'est jamais proposé ; garder son format désactive l'optimisation
+  const kept = Core.shoppingList(lines, { cat, keep: new Set([Core.formatKey(cat.byEan.get("30000006"))]) });
+  assert.deepEqual(kept.map((e) => [e.product.ean, e.packs]), [["30000006", 2], ["30001000", 1]]);
+  // 13 œufs : une boîte de 12 + une de 6 coûte moins que 3 boîtes de 6
+  const mix = Core.cheapestPacks(cat.formats.get(Core.formatKey(cat.byEan.get("30000006"))), 13);
+  assert.deepEqual(mix.map((x) => [x.product.ean, x.packs]).sort(), [["30000006", 1], ["30000012", 1]]);
+});
+
+test("formats : « 5 % MG » et « 15 % MG » ne sont pas le même produit", () => {
+  const p = (nom, cond) => ({ nom, marque: "CHARAL", unite: "KG", conditionnement: cond });
+  assert.notEqual(Core.formatKey(p("Steaks Hachés Bœuf 5% MG CHARAL")), Core.formatKey(p("Steaks Hachés Bœuf 15% MG CHARAL")));
+  assert.equal(Core.formatKey(p("Haricots rouges CHARAL", "250g")), Core.formatKey(p("Haricots rouges  CHARAL", "500g")));
+});
