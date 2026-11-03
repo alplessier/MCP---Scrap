@@ -96,6 +96,22 @@ quantités s'ajoutent à ce qui est déjà au panier, et les produits indisponib
 
 Ensuite, tout est automatique chaque lundi matin.
 
+### Compte du foyer (synchronisation, facultatif)
+
+Le site fonctionne sans compte : tout reste dans le navigateur. Pour retrouver profils, recettes,
+favoris et planning sur plusieurs appareils, un compte par foyer est stocké sur
+[Supabase](https://supabase.com) (connexion par lien envoyé par e-mail, sans mot de passe).
+
+1. Dans le projet Supabase, *SQL Editor* : exécutez [`supabase/schema.sql`](supabase/schema.sql)
+   (table `foyers`, une ligne par compte, protégée par des règles RLS).
+2. *Authentication → URL Configuration* : **Site URL** et **Redirect URLs** =
+   `https://alplessier.github.io/MCP---Scrap/`.
+3. L'adresse du projet et sa clé **publique** (`sb_publishable_…`) sont dans `site/sync.js`.
+   Ne mettez jamais la clé secrète (`service_role`/`sb_secret_…`) dans le site.
+
+L'envoi d'e-mails intégré à Supabase est limité à quelques messages par heure : suffisant pour un
+foyer. La bibliothèque `supabase-js` est copiée dans `site/vendor/` (licence MIT).
+
 ## Fichiers de données
 
 | Fichier | Contenu |

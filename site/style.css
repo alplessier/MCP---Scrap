@@ -596,3 +596,7 @@ details.fold > summary small { font-weight: 700; }
 .photo-note { position: absolute; right: 10px; bottom: 8px; font-size: 0.7rem; font-weight: 700; color: #fff; background: rgb(0 0 0 / 35%); border-radius: 999px; padding: 2px 8px; }
 .tile.big { height: 300px; }
 @media (max-width: 520px) { .tile.big { height: 220px; } }
+
+/* ---------- Compte du foyer ---------- */
+.sync-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.sync-form input { flex: 1; min-width: 200px; padding: 11px 14px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-weight: 600; }
