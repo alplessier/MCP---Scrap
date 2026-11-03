@@ -563,3 +563,16 @@ details.fold > summary small { font-weight: 700; }
 /* ---------- Formats optimisés ---------- */
 .format-note { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 4px; font-size: 0.8rem; font-weight: 700; color: var(--ok); }
 .total-line.saved { color: var(--ok); font-weight: 800; }
+
+/* ---------- Vertus santé ---------- */
+.card-meta .health { color: var(--ok); font-weight: 800; }
+.health-intro { margin: 0 0 12px; grid-column: 1 / -1; }
+.rec-head details.health-fold { margin-top: 4px; }
+.health-list { list-style: none; margin: 6px 0 4px; padding: 0; display: grid; gap: 10px; }
+.health-list li { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; }
+.health-list li > span { font-size: 1.2rem; line-height: 1.3; }
+.health-list b { display: block; font-size: 0.92rem; }
+.health-list li span:not([aria-hidden]) { font-size: 0.84rem; color: var(--muted); font-weight: 600; }
+.health-list li.pro b { color: var(--ok); }
+.health-list li.con b { color: var(--warn); }
+.health-list a { color: var(--muted); }

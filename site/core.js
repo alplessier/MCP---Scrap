@@ -259,6 +259,63 @@ const Core = (() => {
     return { cost, macros, nutriments, nutrientCoverage, missingPrice, missingMacros };
   }
 
+  // ---------- Vertus santé ----------
+  // Leviers les mieux étayés par les grandes études (voir HEALTH_LEVERS[].source), repérés d'après les
+  // ingrédients et les nutriments d'une portion. pros : atouts ; cons : points de vigilance.
+  const HEALTH_LEVERS = {
+    legumineuses: { label: "Légumineuses", icon: "🫘", re: /lentille|pois chiche|haricots? (rouge|blanc|noir)|petits pois|pois casse|feve|edamame|tofu/,
+      why: "Fibres et protéines végétales : le groupe d'aliments associé au plus grand gain d'espérance de vie (+2,5 ans).",
+      source: { label: "Fadnes et al., PLOS Medicine 2022", url: "https://pmc.ncbi.nlm.nih.gov/articles/PMC8824353" } },
+    cereales: { label: "Céréales complètes", icon: "🌾", re: /complet|avoine|boulgour|quinoa|ble noir|sarrasin|epeautre/,
+      why: "En manquer est le 2e risque alimentaire dans le monde ; leurs fibres limitent les pics de glycémie et le LDL-cholestérol.",
+      source: { label: "GBD 2017 Diet, Lancet 2019", url: "https://www.sciencedaily.com/releases/2019/04/190403193702.htm" } },
+    poisson: { label: "Poisson gras", icon: "🐟", re: /saumon|sardine|maquereau|hareng|truite|anchois/,
+      why: "Oméga-3 EPA et DHA : moins d'infarctus, d'AVC et d'insuffisance cardiaque, à raison de deux fois par semaine.",
+      source: { label: "American Heart Association, Circulation 2018", url: "https://www.sciencedaily.com/releases/2018/05/180517081837.htm" } },
+    noix: { label: "Fruits à coque", icon: "🥜", re: /noix(?! de coco)|amande|noisette|cacahuete|pistache|cajou/,
+      why: "Graisses insaturées et polyphénols : −24 % de mortalité par portion quotidienne dans les études de cohorte.",
+      source: { label: "Schwingshackl et al., Am J Clin Nutr 2017", url: "https://pubmed.ncbi.nlm.nih.gov/28446499/" } },
+    olive: { label: "Huile d'olive", icon: "🫒", re: /huile d.olive/,
+      why: "Au cœur du régime méditerranéen, qui a réduit d'environ 30 % les accidents cardiovasculaires dans un essai de 7 400 personnes.",
+      source: { label: "Essai PREDIMED, NEJM 2018", url: "https://acc.org/latest-in-cardiology/articles/2018/06/13/16/05/mediterranean-diet-supplemented-with-extra-virgin-olive-oil-or-nuts-shows-lower-cv-risk" } },
+    fermentes: { label: "Aliments fermentés", icon: "🥛", re: /yaourt|skyr|kefir|fromage blanc|cottage|choucroute/,
+      why: "Un microbiote plus diversifié et des marqueurs d'inflammation en baisse en 10 semaines, dans un essai contrôlé.",
+      source: { label: "Wastyk et al., Cell 2021 (Stanford)", url: "https://med.stanford.edu/news/all-news/2021/07/fermented-food-diet-increases-microbiome-diversity-lowers-inflammation" } },
+    vegetaux: { label: "Fruits & légumes (≥ 150 g)", icon: "🥦",
+      why: "Fibres, potassium et vitamines ; en manger trop peu est l'un des trois premiers risques alimentaires dans le monde.",
+      source: { label: "GBD 2017 Diet, Lancet 2019", url: "https://www.sciencedaily.com/releases/2019/04/190403193702.htm" } },
+    fibres: { label: "Riche en fibres (≥ 8 g)", icon: "🌱",
+      why: "Un tiers des 25 à 29 g par jour associés au plus faible risque de maladies cardiaques, de diabète et de cancer colorectal.",
+      source: { label: "Reynolds et al., Lancet 2019", url: "https://pubmed.ncbi.nlm.nih.gov/30638909/" } },
+    charcuterie: { label: "Charcuterie", icon: "⚠️", re: /jambon|lardon|bacon|saucisse|chorizo|salami|saucisson/, con: true,
+      why: "Les viandes transformées sont associées à +23 % de mortalité par portion quotidienne : à garder occasionnelles.",
+      source: { label: "Schwingshackl et al., Am J Clin Nutr 2017", url: "https://pubmed.ncbi.nlm.nih.gov/28446499/" } },
+    viande: { label: "Viande rouge", icon: "⚠️", re: /boeuf|steak|agneau|porc|veau/, con: true,
+      why: "Associée à +10 % de mortalité par portion quotidienne : le poisson ou les légumineuses font de bons remplaçants.",
+      source: { label: "Schwingshackl et al., Am J Clin Nutr 2017", url: "https://pubmed.ncbi.nlm.nih.gov/28446499/" } },
+    sel: { label: "Salé (plus de 2 g de sel)", icon: "⚠️", con: true,
+      why: "Le sel est le 1er risque alimentaire dans le monde (tension, AVC) ; repère : 6 g par jour, soit 2 g par repas.",
+      source: { label: "GBD 2017 Diet, Lancet 2019", url: "https://www.sciencedaily.com/releases/2019/04/190403193702.htm" } },
+  };
+  const VEGETABLES = /brocoli|courgette|epinard|carotte|tomate|poivron|haricots? verts?|champignon|salade|chou|aubergine|concombre|oignon|poireau|legume|petits pois|banane|\bpommes?\b(?! de terre)|fruits rouges|myrtille|fraise|orange|citron|mangue|kiwi|poire|avocat/;
+
+  // perPortion : valeurs d'une portion (macros, nutriments, part des calories couverte par les nutriments)
+  function healthProfile(r, perPortion = null) {
+    const names = (r.ingredients || []).map(parseLine).filter((i) => !i.error);
+    const text = names.map((i) => normalize(i.name));
+    const pros = [], cons = [];
+    for (const [k, lever] of Object.entries(HEALTH_LEVERS)) {
+      if (lever.re && text.some((t) => lever.re.test(t))) (lever.con ? cons : pros).push(k);
+    }
+    const vegGrams = names.filter((i) => VEGETABLES.test(normalize(i.name)) && i.grams != null).reduce((a, i) => a + i.grams, 0) / (r.portions || 1);
+    if (vegGrams >= 150) pros.push("vegetaux");
+    if (perPortion && perPortion.nutriments && perPortion.nutrientCoverage >= 0.6) {
+      if (perPortion.nutriments[0] >= 8) pros.push("fibres");
+      if (perPortion.nutriments[3] > 2) cons.push("sel");
+    }
+    return { pros, cons, score: Math.max(0, pros.length - cons.length), vegGrams };
+  }
+
   // Repères journaliers (adulte) : fibres au moins 30 g (Anses) ; sucres totaux au plus 100 g (Anses, hors
   // lactose et galactose) ; acides gras saturés au plus 12 % des calories (Anses) ; sel au plus 6 g (Anses).
   const NUTRIENT_INFO = [
@@ -607,7 +664,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
+    encode, decode, cartUrl, HEALTH_LEVERS, healthProfile, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 

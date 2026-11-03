@@ -217,6 +217,15 @@ function scoreOf(r) {
     members: per,
   };
 }
+// Vertus santé d'une recette (portion standard), mises en cache comme stats()
+const healthCache = new Map();
+function healthOf(r) {
+  const key = `${r.id}|${r.ingredients.join("\n")}|${state.strategy}`;
+  if (!healthCache.has(key)) healthCache.set(key, C.healthProfile(r, stats(r)));
+  return healthCache.get(key);
+}
+const HEALTH_MIN = 3; // atouts nets pour le filtre « Vertus santé »
+
 const byScore = (a, b) => (scoreOf(b)?.score ?? -1) - (scoreOf(a)?.score ?? -1);
 
 function fitLabel(r, kcalPP, meal) {
@@ -258,7 +267,7 @@ function cardHtml(r, meal, rank = null, extra = "") {
           ${r.temps ? `<span>⏱ ${r.temps} min</span>` : ""}
           <span>${euro(s.cost)}/pers.</span>
         </div>
-        <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span></div>
+        <div class="card-meta"><span class="prot">💪 ${num(s.macros[1])} g prot.</span><span>${num(s.macros[0])} kcal</span>${healthOf(r).score ? `<span class="health" title="Vertus santé : ${esc(healthOf(r).pros.map((k) => C.HEALTH_LEVERS[k].label).join(", "))}">🌿 ${healthOf(r).score}</span>` : ""}</div>
         <div class="card-meta">${sc ? `<span class="score" title="Pertinence pour votre objectif">🎯 ${sc.score}/100</span>` : ""}${fitLabel(r, s.macros[0], meal)}</div>
         ${sc && sc.flags.length ? `<div class="card-meta flags">${sc.flags.map((f) => `<span>${FLAG_LABELS[f]}</span>`).join("")}</div>` : ""}
         ${extra}
@@ -339,15 +348,18 @@ function viewRecipes() {
   const hidden = allRecipes().length - compatible.length;
   const list = (ui.showAll ? allRecipes() : compatible).filter((r) => {
     if (ui.tag === "favoris") { if (!isFav(r)) return false; }
+    else if (ui.tag === "sante") { if (healthOf(r).score < HEALTH_MIN) return false; }
     else if (ui.tag && !(r.tags || []).includes(ui.tag)) return false;
     if (!q.length) return true;
     const w = C.words(`${r.nom} ${r.ingredients.join(" ")} ${(r.tags || []).map((t) => book.tags[t] || t).join(" ")}`);
     return q.every((t) => w.some((x) => x.startsWith(t)));
   });
-  const tags = Object.entries({ ...(state.favs.length ? { favoris: "♥ Favoris" } : {}), ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
-  if (daily) {
-    // mêmes règles que les rangées « top 3 » : dans un filtre de repas, les plats passent avant les collations
-    list.sort((a, b) => (ui.tag && ui.tag !== "favoris" ? eligibleForTop(b, ui.tag) - eligibleForTop(a, ui.tag) : 0) || byScore(a, b));
+  const tags = Object.entries({ ...(state.favs.length ? { favoris: "♥ Favoris" } : {}), sante: "🌿 Vertus santé", ...book.tags, ...(state.custom.length ? { perso: "Mes recettes" } : {}) });
+  if (daily || ui.tag === "sante") {
+    // mêmes règles que les rangées « top 3 » : dans un filtre de repas, les plats passent avant les collations ;
+    // dans « Vertus santé », les recettes qui ont le plus d'atouts d'abord
+    list.sort((a, b) => (ui.tag === "sante" ? healthOf(b).score - healthOf(a).score : 0)
+      || (ui.tag && !["favoris", "sante"].includes(ui.tag) ? eligibleForTop(b, ui.tag) - eligibleForTop(a, ui.tag) : 0) || byScore(a, b));
   }
   const showTops = daily && !ui.tag && !q.length;
   const favs = allRecipes().filter(isFav);
@@ -399,7 +411,8 @@ function viewRecipes() {
       ${favRow}${tops}
     </section><h2 class="all-title">Toutes les recettes</h2>` : ""}
     <div class="grid">
-      ${list.map((r, i) => cardHtml(r, meal, daily && ui.tag && ui.tag !== "favoris" && !q.length && eligibleForTop(r, ui.tag) ? i : null)).join("")}
+      ${ui.tag === "sante" ? `<p class="muted health-intro">Recettes qui réunissent au moins ${HEALTH_MIN} des atouts les mieux étayés par la recherche : légumineuses, céréales complètes, poisson gras, fruits à coque, huile d'olive, aliments fermentés, fruits et légumes, fibres. La fiche explique chacun, avec son étude.</p>` : ""}
+      ${list.map((r, i) => cardHtml(r, meal, daily && ui.tag && !["favoris", "sante"].includes(ui.tag) && !q.length && eligibleForTop(r, ui.tag) ? i : null)).join("")}
       <a class="card create" href="#/creer">
         <div class="tile" aria-hidden="true">✍️</div>
         <div class="card-body"><div class="card-title">Créer ma recette</div><div class="card-meta"><span>Mode libre : vos ingrédients, chiffrés au Drive</span></div></div>
@@ -472,6 +485,21 @@ function addFridge(value) {
   if (!v || state.fridge.includes(v)) return;
   state.fridge = [...state.fridge, v];
   save();
+}
+
+function healthPanel(r) {
+  const h = healthOf(r);
+  if (!h.pros.length && !h.cons.length) return "";
+  const item = (k) => {
+    const l = C.HEALTH_LEVERS[k];
+    return `<li class="${l.con ? "con" : "pro"}"><span aria-hidden="true">${l.icon}</span><div><b>${esc(l.label)}</b>
+      <span>${esc(l.why)} <a href="${esc(l.source.url)}" target="_blank" rel="noopener">${esc(l.source.label)}</a></span></div></li>`;
+  };
+  return `<details class="fold health-fold" data-fold="sante"${foldOpen("sante") ? " open" : ""}>
+    <summary>🌿 Vertus santé <small class="muted">· ${h.pros.length} atout${h.pros.length > 1 ? "s" : ""}${h.cons.length ? `, ${h.cons.length} point${h.cons.length > 1 ? "s" : ""} de vigilance` : ""}</small></summary>
+    <ul class="health-list">${h.pros.map(item).join("")}${h.cons.map(item).join("")}</ul>
+    <p class="hint">D'après les grandes études de nutrition, surtout des associations observées sur de larges populations : des repères, pas des promesses ni un avis médical.</p>
+  </details>`;
 }
 
 // Volets repliables de la fiche : ouverts par défaut sur ordinateur, fermés sur mobile ; on retient le choix
@@ -551,6 +579,7 @@ function viewRecipe(id) {
           <button class="btn" data-action="send-recipe" data-id="${esc(r.id)}">🛒 Panier Carrefour</button>
           ${favButton(r, "btn fav-btn")}
         </div>
+        ${healthPanel(r)}
         </div>
         <div class="panel rec-who">
           <h2>Pour qui ?</h2>

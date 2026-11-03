@@ -266,3 +266,19 @@ test("formats : « 5 % MG » et « 15 % MG » ne sont pas le même produit", () 
   assert.notEqual(Core.formatKey(p("Steaks Hachés Bœuf 5% MG CHARAL")), Core.formatKey(p("Steaks Hachés Bœuf 15% MG CHARAL")));
   assert.equal(Core.formatKey(p("Haricots rouges CHARAL", "250g")), Core.formatKey(p("Haricots rouges  CHARAL", "500g")));
 });
+
+test("vertus santé : atouts et points de vigilance d'après les ingrédients et les nutriments", () => {
+  const bowl = { portions: 2, ingredients: ["200 g pois chiches", "120 g quinoa", "300 g brocolis", "10 g huile d'olive", "100 g skyr"] };
+  const h = Core.healthProfile(bowl, { nutriments: [9, 4, 1, 0.8], nutrientCoverage: 0.9 });
+  assert.deepEqual(h.pros.sort(), ["cereales", "fermentes", "fibres", "legumineuses", "olive", "vegetaux"]);
+  assert.deepEqual(h.cons, []);
+  assert.equal(h.score, 6);
+  const croque = { portions: 1, ingredients: ["2 tranches pain de mie complet @25g", "60 g jambon blanc", "20 g emmental"] };
+  const c = Core.healthProfile(croque, { nutriments: [3, 2, 6, 2.6], nutrientCoverage: 0.9 });
+  assert.deepEqual(c.pros, ["cereales"]);
+  assert.deepEqual(c.cons, ["charcuterie", "sel"]);
+  assert.equal(c.score, 0);
+  // noix de coco n'est pas un fruit à coque ; pomme de terre n'est pas compté comme légume ; nutriments trop incomplets : ignorés
+  const coco = Core.healthProfile({ portions: 1, ingredients: ["200 ml lait de coco", "300 g pommes de terre"] }, { nutriments: [10, 0, 0, 5], nutrientCoverage: 0.3 });
+  assert.deepEqual([coco.pros, coco.cons], [[], []]);
+});
