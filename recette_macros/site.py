@@ -66,6 +66,34 @@ def build_userscript(site_dir: Path = SITE_DIR) -> Path:
     return path
 
 
+def fetch_photos(site_dir: Path = SITE_DIR, get=None, log=print) -> int:
+    """Copie dans site/img/<id>.webp la photo (version légère) de chaque recette de site/recettes.json.
+
+    Lancé avant chaque mise en ligne : le site ne dépend plus du serveur d'images. Une photo déjà copiée
+    n'est pas retéléchargée ; un échec est ignoré (le site charge alors l'image en ligne, ou l'emoji).
+    """
+    if get is None:
+        import requests
+
+        get = lambda url: requests.get(url, timeout=20)  # noqa: E731
+    recipes = json.loads((site_dir / "recettes.json").read_text(encoding="utf-8"))["recettes"]
+    folder = site_dir / "img"
+    folder.mkdir(exist_ok=True)
+    copied = 0
+    for r in recipes:
+        url, target = r.get("photo"), folder / f"{r['id']}.webp"
+        if not url or target.exists():
+            continue
+        try:
+            resp = get(re.sub(r"\.png$", "_min.webp", url))
+            if resp.status_code == 200 and resp.content[:4] == b"RIFF":
+                target.write_bytes(resp.content)
+                copied += 1
+        except Exception as e:  # réseau : sans gravité, le site a ses replis
+            log(f"photo de {r['id']} non copiée : {e}")
+    return copied
+
+
 ASSET_RE = re.compile(r'((?:href|src)="(?:style\.css|core\.js|app\.js))(?:\?v=[^"]*)?"')
 
 
@@ -85,3 +113,4 @@ def stamp_assets(site_dir: Path = SITE_DIR, version: str | None = None) -> str:
 if __name__ == "__main__":
     print(build_site_data())
     print("version des fichiers :", stamp_assets())
+    print("photos copiées :", fetch_photos())

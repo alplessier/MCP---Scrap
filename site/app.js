@@ -263,8 +263,13 @@ function fitLabel(r, kcalPP, meal) {
 
 // ---------- Rendu commun ----------
 
+// Photo de la recette : copie hébergée avec le site (img/<id>.webp), sinon la version légère puis l'originale
+// en ligne ; si aucune ne charge, l'emoji reste visible dessous.
 function tileHtml(r, cls = "") {
-  return `<div class="tile ${cls}" style="background:${esc(r.couleur)}" aria-hidden="true">${esc(r.emoji)}</div>`;
+  const photo = r.photo
+    ? `<img class="recipe-photo" src="img/${encodeURIComponent(r.id)}.webp" data-fallbacks="${esc(r.photo.replace(/\.png$/, "_min.webp"))} ${esc(r.photo)}" alt="" loading="lazy" decoding="async">`
+    : "";
+  return `<div class="tile ${cls}" style="background:${esc(r.couleur)}" aria-hidden="true"><span class="tile-emoji">${esc(r.emoji)}</span>${photo}</div>`;
 }
 
 const isFav = (r) => state.favs.includes(r.id);
@@ -558,7 +563,7 @@ function viewRecipe(id) {
     <a class="back" href="#/">← Recettes</a>
     <div class="detail">
       <div>
-        ${tileHtml(r, "big rec-tile")}
+        ${tileHtml(r, "big rec-tile").replace("</div>", `${r.photo ? `<span class="photo-note">Photo d'illustration</span>` : ""}</div>`)}
         <div class="panel rec-ingredients" style="margin-top:16px">
           <h2>Ingrédients <small class="muted">· ${portionsLabel(s.p)}</small></h2>
           ${ingredientGrid(main)}
@@ -1971,6 +1976,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "ArrowLeft") { ui.cookStep = Math.max(0, ui.cookStep - 1); render(); }
 });
 
+
+// Photo introuvable : on passe à l'adresse suivante, puis on la retire (l'emoji reste)
+document.addEventListener("error", (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("recipe-photo")) return;
+  const [next, ...rest] = (img.dataset.fallbacks || "").split(" ").filter(Boolean);
+  if (next) { img.dataset.fallbacks = rest.join(" "); img.src = next; } else img.remove();
+}, true);
 
 // mémorise l'ouverture des volets repliables de la fiche (l'événement « toggle » ne remonte pas : on écoute en capture)
 document.addEventListener("toggle", (e) => {
