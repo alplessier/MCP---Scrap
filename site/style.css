@@ -589,3 +589,10 @@ details.fold > summary small { font-weight: 700; }
 .pref-list li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .pref-list b { display: block; text-transform: capitalize; }
 .pref-list small { color: var(--muted); font-weight: 700; font-size: 0.8rem; }
+
+/* ---------- Photos des recettes ---------- */
+.tile { overflow: hidden; }
+.recipe-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.photo-note { position: absolute; right: 10px; bottom: 8px; font-size: 0.7rem; font-weight: 700; color: #fff; background: rgb(0 0 0 / 35%); border-radius: 999px; padding: 2px 8px; }
+.tile.big { height: 300px; }
+@media (max-width: 520px) { .tile.big { height: 220px; } }

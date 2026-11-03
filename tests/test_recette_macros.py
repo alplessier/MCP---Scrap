@@ -248,3 +248,31 @@ def test_stamp_assets(tmp_path):
     html = (tmp_path / "index.html").read_text(encoding="utf-8")
     assert 'href="style.css?v=abc123"' in html and 'src="core.js?v=abc123"' in html and 'src="app.js?v=abc123"' in html
     assert 'href="carrefour-panier.user.js"' in html  # les autres liens ne changent pas
+
+
+def test_fetch_photos(tmp_path):
+    from recette_macros.site import fetch_photos
+
+    (tmp_path / "recettes.json").write_text(json.dumps({"recettes": [
+        {"id": "a", "photo": "https://img.example/a.png"},
+        {"id": "b", "photo": "https://img.example/b.png"},
+        {"id": "c"},
+    ]}), encoding="utf-8")
+
+    class Resp:
+        def __init__(self, status, content):
+            self.status_code, self.content = status, content
+
+    asked = []
+    def get(url):
+        asked.append(url)
+        if "b_min" in url:
+            raise OSError("réseau coupé")
+        return Resp(200, b"RIFF....WEBP")
+
+    assert fetch_photos(tmp_path, get=get, log=lambda *_: None) == 1
+    assert asked == ["https://img.example/a_min.webp", "https://img.example/b_min.webp"]  # version légère
+    assert (tmp_path / "img" / "a.webp").read_bytes().startswith(b"RIFF")
+    assert not (tmp_path / "img" / "b.webp").exists()
+    assert fetch_photos(tmp_path, get=get, log=lambda *_: None) == 0  # déjà copiée : pas retéléchargée
+    assert asked.count("https://img.example/a_min.webp") == 1

@@ -6,3 +6,4 @@ __pycache__/
 # généré par python -m recette_macros.site (dans le workflow avant le déploiement)
 site/data/
 site/carrefour-panier.user.js
+site/img/
