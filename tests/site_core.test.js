@@ -68,7 +68,7 @@ test("adresse du panier : ancre décodable, produits déjà possédés exclus", 
   const url = Core.cartUrl(cat, "Bowl é", list);
   assert.match(url, /^https:\/\/www\.carrefour\.fr\/set-store\/575#recette-macros=/);
   const order = Core.decode(url.split("#recette-macros=")[1]);
-  assert.deepEqual(order.articles, [["s", 2, "Skyr Nature"]]);
+  assert.deepEqual(order.articles, [["s", 2, "Skyr Nature", []]]);
   assert.equal(order.nom, "Bowl é");
 });
 
@@ -281,4 +281,49 @@ test("vertus santé : atouts et points de vigilance d'après les ingrédients et
   // noix de coco n'est pas un fruit à coque ; pomme de terre n'est pas compté comme légume ; nutriments trop incomplets : ignorés
   const coco = Core.healthProfile({ portions: 1, ingredients: ["200 ml lait de coco", "300 g pommes de terre"] }, { nutriments: [10, 0, 0, 5], nutrientCoverage: 0.3 });
   assert.deepEqual([coco.pros, coco.cons], [[], []]);
+});
+
+test("produits préférés, produits indisponibles et remplaçants proposés au panier", () => {
+  const cat = catalogue([
+    product({ ean: "o1", nom: "Œufs plein air", prix: 3, prix_unite: 0.25, unite: "PIECE", categorie: "Œufs" }),
+    product({ ean: "o2", nom: "Œufs bio Loué", prix: 4.2, prix_unite: 0.35, unite: "PIECE", categorie: "Œufs" }),
+    product({ ean: "o3", nom: "Œufs frais", prix: 2.7, prix_unite: 0.45, unite: "PIECE", categorie: "Œufs" }),
+  ]);
+  const base = Core.computeLines(cat, ["6 oeufs"])[0];
+  const prefs = { [Core.prefKey("oeuf")]: "o2" };
+  // préférence : appliquée à toute recette qui demande des œufs, au singulier comme au pluriel
+  assert.equal(Core.computeLines(cat, ["6 oeufs"], { prefs })[0].product.ean, "o2");
+  assert.equal(Core.computeLines(cat, ["2 oeuf"], { prefs })[0].preferred, true);
+  // le choix fait dans une recette reste prioritaire
+  assert.equal(Core.computeLines(cat, ["6 oeufs"], { prefs, pins: { [base.key]: "o3" } })[0].product.ean, "o3");
+  // produit préféré indisponible : remplacé par le suivant, et signalé
+  const line = Core.computeLines(cat, ["6 oeufs"], { prefs, unavailable: new Set(["o2"]) })[0];
+  assert.notEqual(line.product.ean, "o2");
+  assert.equal(line.replaced.ean, "o2");
+  assert.ok(!line.choices.some((p) => p.ean === "o2"));
+  // la liste de courses garde des remplaçants, envoyés avec la commande au script Carrefour
+  const list = Core.shoppingList(Core.computeLines(cat, ["6 oeufs"], { prefs }));
+  const order = Core.decode(Core.cartUrl(cat, "Omelette", list).split("#recette-macros=")[1]);
+  assert.equal(order.articles[0][0], "o2");
+  assert.ok(order.articles[0][3].length >= 1 && order.articles[0][3].every((a) => a[0] !== "o2" && a[1] >= 1));
+});
+
+test("formats et indisponibles : le format refusé n'est plus choisi, les autres formats sont proposés en remplaçants", () => {
+  const cat = Core.loadCatalogue({
+    maj: "2026-11-03", magasin: { ref: "575", nom: "Drive Test" },
+    colonnes: ["ean", "nom", "marque", "prix", "prix_unite", "unite", "conditionnement", "macros"],
+    produits: [
+      ["30000006", "Œufs Bio CARREFOUR BIO", "CARREFOUR BIO", 2.39, 0.398, "PIECE", "la boite de 6", null],
+      ["30000010", "Œufs Bio CARREFOUR BIO", "CARREFOUR BIO", 3.79, 0.379, "PIECE", "la boite de 10", null],
+      ["30000012", "Œufs frais LOUE", "LOUE", 4.45, 0.37, "PIECE", "la boite de 12", null],
+    ],
+    generique: {},
+  });
+  const lines = Core.computeLines(cat, ["10 oeufs #30000006"]);
+  const best = Core.shoppingList(lines, { cat });
+  assert.deepEqual(best.map((e) => [e.product.ean, e.packs]), [["30000010", 1]]);
+  assert.equal(best[0].alternatives[0].ean, "30000006"); // l'autre format d'abord
+  const after = Core.shoppingList(lines, { cat, unavailable: new Set(["30000010"]) });
+  assert.deepEqual(after.map((e) => [e.product.ean, e.packs]), [["30000006", 2]]);
+  assert.ok(!after[0].alternatives.some((p) => p.ean === "30000010"));
 });
