@@ -327,3 +327,23 @@ test("formats et indisponibles : le format refusé n'est plus choisi, les autres
   assert.deepEqual(after.map((e) => [e.product.ean, e.packs]), [["30000006", 2]]);
   assert.ok(!after[0].alternatives.some((p) => p.ean === "30000010"));
 });
+
+test("synchronisation : première connexion, les données de l'appareil et du compte sont réunies", () => {
+  const local = {
+    favs: ["a", "b"], custom: [{ id: "p1", nom: "Mon bowl" }], members: [{ id: "m1", nom: "Moi", age: 25 }],
+    plan: { 0: { diner: { id: "x", who: ["m1"] } } }, prefProducts: { oeuf: "1" }, strategy: "pertinence",
+  };
+  const remote = {
+    favs: ["b", "c"], custom: [{ id: "p2", nom: "Ma soupe" }], members: [{ id: "m1", nom: "Moi", age: 26 }, { id: "m2", nom: "Léa" }],
+    plan: { 0: { dejeuner: { id: "y", who: ["m1"] } }, 1: { diner: { id: "z", who: ["m2"] } } }, prefProducts: { riz: "2" }, strategy: "moins-cher",
+  };
+  const m = Core.mergeSyncData(local, remote);
+  assert.deepEqual(m.favs, ["a", "b", "c"]);
+  assert.deepEqual(m.custom.map((r) => r.id), ["p1", "p2"]);
+  assert.deepEqual(m.members.map((x) => [x.id, x.age]), [["m1", 26], ["m2", undefined]]); // à égalité : le compte
+  assert.deepEqual(Object.keys(m.plan[0]).sort(), ["dejeuner", "diner"]);
+  assert.ok(m.plan[1].diner);
+  assert.deepEqual(m.prefProducts, { oeuf: "1", riz: "2" });
+  assert.equal(m.strategy, "moins-cher");
+  assert.deepEqual(Core.mergeSyncData({ favs: ["a"] }, {}).favs, ["a"]);
+});

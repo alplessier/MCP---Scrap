@@ -94,7 +94,7 @@ def fetch_photos(site_dir: Path = SITE_DIR, get=None, log=print) -> int:
     return copied
 
 
-ASSET_RE = re.compile(r'((?:href|src)="(?:style\.css|core\.js|app\.js))(?:\?v=[^"]*)?"')
+ASSET_RE = re.compile(r'((?:href|src)="(?:style\.css|core\.js|app\.js|sync\.js))(?:\?v=[^"]*)?"')
 
 
 def stamp_assets(site_dir: Path = SITE_DIR, version: str | None = None) -> str:

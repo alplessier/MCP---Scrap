@@ -47,9 +47,13 @@ function loadState() {
   base.members = [newMember()];
   return base;
 }
-function save() {
+function persistState() {
   try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch { /* navigation privée, etc. */ }
+}
+function save() {
+  persistState();
   updateCounts();
+  if (typeof syncSoon === "function") syncSoon(); // compte du foyer (sync.js)
 }
 
 function customFromText(nom, portions, texte, i = 0) {
@@ -1010,6 +1014,7 @@ function viewProfil() {
             `<button type="button" class="chip" data-action="foyer-materiel" data-value="${k}" aria-pressed="${mat.includes(k)}">${esc(e.label)}</button>`).join("")}</div>
           <p class="hint">Les recettes qui demandent un appareil absent sont masquées.</p>
         </div>
+        ${typeof syncPanel === "function" ? syncPanel() : ""}
         ${productPrefsPanel()}
       </div>
       <aside class="panel sticky">
@@ -1372,6 +1377,8 @@ let lastHash = null;
 function render({ keepScroll = false } = {}) {
   const hash = location.hash || "#/";
   // anciens liens partagés : #r=<recette du mode libre>
+  // retour du lien de connexion au compte : sync.js lit la session dans l'adresse, puis revient au profil
+  if (/access_token=|error_description=/.test(hash)) return;
   // retour du script Carrefour : produits refusés (indisponibles ce jour-là)
   const indispo = hash.match(/^#indispo=([\d,]+)$/);
   if (indispo) {

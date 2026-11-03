@@ -656,6 +656,30 @@ const Core = (() => {
     return { factor, flags };
   }
 
+  // ---------- Synchronisation du compte ----------
+  // Première connexion d'un appareil qui a déjà des données : on réunit les deux plutôt que d'en perdre.
+  // Listes (favoris…) : union ; recettes perso et membres : par identifiant ; planning, menu, choix de produits :
+  // par clé ; réglages simples : ceux du compte. À égalité, la version du compte gagne.
+  function mergeSyncData(local = {}, remote = {}) {
+    const out = { ...local, ...remote };
+    const union = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+    const byId = (a, b) => {
+      const m = new Map((a || []).map((x) => [x.id, x]));
+      for (const x of b || []) m.set(x.id, x);
+      return [...m.values()];
+    };
+    for (const k of ["favs", "owned", "pantryBuy", "formatKeep", "fridge"]) if (local[k] || remote[k]) out[k] = union(local[k], remote[k]);
+    for (const k of ["custom", "members"]) if (local[k] || remote[k]) out[k] = byId(local[k], remote[k]);
+    for (const k of ["menu", "pins", "prefProducts", "unavailable"]) if (local[k] || remote[k]) out[k] = { ...(local[k] || {}), ...(remote[k] || {}) };
+    if (local.plan || remote.plan) {
+      out.plan = {};
+      for (const d of new Set([...Object.keys(local.plan || {}), ...Object.keys(remote.plan || {})])) {
+        out.plan[d] = { ...((local.plan || {})[d] || {}), ...((remote.plan || {})[d] || {}) };
+      }
+    }
+    return out;
+  }
+
   // ---------- Partage ----------
 
   function encode(obj) {
@@ -688,7 +712,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, prefKey, HEALTH_LEVERS, healthProfile, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
+    encode, decode, cartUrl, prefKey, mergeSyncData, HEALTH_LEVERS, healthProfile, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 
