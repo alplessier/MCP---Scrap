@@ -125,14 +125,42 @@
     await wait(600);
     const missing = await missingNow();
     const added = items.length - missing.length;
+    // Pour chaque produit refusé : les remplaçants préparés par le site (même ingrédient), à ajouter d'un clic
+    const price = (v) => `${Number(v).toFixed(2).replace(".", ",")} €`;
     const list = missing.length
       ? `<div style="margin-top:8px;color:#9a5b00">Non ajouté${missing.length > 1 ? "s" : ""} (indisponible${missing.length > 1 ? "s" : ""} aujourd'hui ?) :</div>
-         <ul style="margin:4px 0 0;padding-left:18px">${missing.map((m) => `<li>${esc(m[2] || m[0])}</li>`).join("")}</ul>`
+         <ul style="margin:4px 0 0;padding-left:18px">${missing.map((m, i) => `<li style="margin-top:6px">${esc(m[2] || m[0])}
+           ${(m[3] || []).length ? `<div style="margin-top:4px;display:grid;gap:4px">${m[3].map((alt, j) =>
+             `<button type="button" data-alt="${i}:${j}" style="${button};text-align:left;font-size:13px">＋ ${esc(alt[2])}${alt[4] ? ` (${esc(alt[4])})` : ""} · ${price(alt[3])}${alt[1] > 1 ? ` ×${alt[1]}` : ""}</button>`).join("")}</div>` : ""}</li>`).join("")}</ul>
+         ${order.site ? `<div style="margin-top:10px"><a href="${esc(order.site)}#indispo=${missing.map((m) => encodeURIComponent(m[0])).join(",")}" target="_blank" rel="noopener"
+           style="color:#2f7d32;font-weight:600">Signaler au site</a> <span style="color:#5d6857;font-size:12px">: il choisira d'avance un remplaçant pour vos prochaines recettes.</span></div>` : ""}`
       : "";
     show(missing.length ? `${added} produit${added > 1 ? "s" : ""} sur ${items.length} ajouté${added > 1 ? "s" : ""}` : `✓ ${added} produit${added > 1 ? "s" : ""} ajouté${added > 1 ? "s" : ""} au panier`,
       `<div>« ${esc(order.nom || "Recette")} » — ${esc(order.nomMagasin || "magasin " + ref)}.</div>${list}` +
       `<div style="margin-top:8px;color:#5d6857;font-size:12px">Connecté à votre compte, le panier est aussi dans l'application Carrefour.</div>`,
       true, missing.length ? addItems : null);
+    box.querySelectorAll("[data-alt]").forEach((btn) => {
+      btn.onclick = async () => {
+        const [i, j] = btn.dataset.alt.split(":").map(Number);
+        const [ean, qty] = missing[i][3][j];
+        btn.disabled = true;
+        btn.textContent = "Ajout…";
+        try {
+          const cart = await cartQuantities();
+          const start = cart[ean] || 0;
+          try {
+            await window.ONECF.addToCart([{ ean, counter: start + qty, lastCounter: start, basketServiceId: service }]);
+          } catch (e) { /* vérifié ci-dessous */ }
+          await wait(600);
+          const ok = ((await cartQuantities())[ean] || 0) >= start + qty;
+          btn.textContent = ok ? `✓ Ajouté : ${missing[i][3][j][2]}` : "✗ Indisponible aussi";
+          btn.style.color = ok ? "#2f7d32" : "#9a5b00";
+        } catch (e) {
+          btn.textContent = "✗ Échec, réessayez";
+          btn.disabled = false;
+        }
+      };
+    });
   }
 
   run().catch(fail);

@@ -225,18 +225,32 @@ const Core = (() => {
 
   // Une recette : liste de lignes, multipliée par `factor`, avec le produit choisi pour chaque ligne.
   // pins : { clé de ligne → EAN choisi à la main }
-  function computeLines(cat, lines, { factor = 1, pins = {}, strategy = "pertinence", keyPrefix = "" } = {}) {
+  // Clé d'une préférence de produit : l'ingrédient sans mots vides ni pluriel (« oeufs » = « oeuf »)
+  const prefKey = (name) => queryTokens(name || "").join(" ");
+
+  // Produit retenu pour chaque ligne, par ordre de priorité : choix fait dans cette recette (pins), produit écrit
+  // dans une recette perso (#ean, si lineEanFirst), produit préféré pour cet ingrédient (prefs), produit écrit dans
+  // la recette, puis le plus pertinent. Les produits signalés indisponibles (unavailable) sont écartés : la ligne
+  // passe au suivant et garde le produit écarté dans « replaced ».
+  function computeLines(cat, lines, { factor = 1, pins = {}, strategy = "pertinence", keyPrefix = "", prefs = {},
+    lineEanFirst = false, unavailable = new Set() } = {}) {
     return lines.map((raw, i) => {
       const parsed = parseLine(raw);
       if (parsed.error) return { ing: parsed, error: parsed.error, key: `${keyPrefix}${i}` };
       const ing = scaleIngredient(parsed, factor);
       const key = `${keyPrefix}${normalize(parsed.name)}`;
-      const choices = candidatesFor(cat, ing, strategy);
-      const pinned = ing.ean || pins[key];
-      let product = pinned ? cat.byEan.get(pinned) : null;
+      const pk = prefKey(parsed.name);
+      const all = candidatesFor(cat, ing, strategy);
+      const usable = (ean) => { const p = ean && cat.byEan.get(ean); return p && isUsable(ing, p) ? p : null; };
+      const wanted = [pins[key], lineEanFirst ? ing.ean : null, prefs[pk], ing.ean].map(usable).find(Boolean) || null;
+      const choices = all.filter((p) => !unavailable.has(p.ean));
+      let product = wanted;
+      let replaced = null;
+      if (product && unavailable.has(product.ean)) { replaced = product; product = null; }
       if (product && !choices.includes(product)) choices.unshift(product);
+      if (!product && !replaced && all[0] && unavailable.has(all[0].ean)) replaced = all[0];
       product = product || choices[0] || null;
-      return { ...costLine(cat, ing, product), choices, key };
+      return { ...costLine(cat, ing, product), choices, key, prefKey: pk, preferred: !!product && prefs[pk] === product.ean, replaced };
     });
   }
 
@@ -334,13 +348,14 @@ const Core = (() => {
   // Avec cat : les formats d'un même produit sont regroupés et on retient la combinaison de paquets la
   // moins chère pour la quantité totale (12 œufs : une boîte de 12 plutôt que deux de 6). keep : familles
   // (formatKey) dont on garde les formats choisis.
-  function shoppingList(results, { exclude = new Set(), cat = null, keep = new Set() } = {}) {
+  function shoppingList(results, { exclude = new Set(), cat = null, keep = new Set(), unavailable = new Set() } = {}) {
     const byEan = new Map();
     for (const r of results) {
       if (!r.product || r.used == null) continue;
-      const entry = byEan.get(r.product.ean) || { product: r.product, used: 0, uses: [] };
+      const entry = byEan.get(r.product.ean) || { product: r.product, used: 0, uses: [], alternatives: [] };
       entry.used += r.used;
       entry.uses.push(r.ing.raw);
+      for (const c of r.choices || []) if (c !== r.product && !entry.alternatives.includes(c)) entry.alternatives.push(c);
       byEan.set(r.product.ean, entry);
     }
     const plain = (e) => {
@@ -356,7 +371,10 @@ const Core = (() => {
     }
     const out = [];
     for (const [k, entries] of families) {
-      const options = cat.formats.get(k) || [];
+      const options = (cat.formats.get(k) || []).filter((p) => !unavailable.has(p.ean));
+      // remplaçants : d'abord les autres formats du même produit, puis les autres produits de l'ingrédient
+      const alternatives = [...new Set([...options, ...entries.flatMap((e) => e.alternatives)])].filter((p) => !unavailable.has(p.ean));
+      for (const e of entries) e.alternatives = alternatives.filter((p) => p !== e.product);
       const before = entries.map(plain);
       if (options.length < 2 || keep.has(k) || entries.some((e) => exclude.has(e.product.ean))) { out.push(...before); continue; }
       const used = entries.reduce((a, e) => a + e.used, 0);
@@ -368,6 +386,7 @@ const Core = (() => {
       const description = before.map((e) => `${e.packs} × ${e.product.conditionnement || "paquet"}`).join(" + ");
       plan.forEach((x, i) => out.push({
         product: x.product, used: x.used, uses, packs: x.packs, price: x.packs * x.product.prix, owned: false,
+        alternatives: alternatives.filter((p) => p !== x.product),
         optimized: i === 0 ? { key: k, before: description, saving: beforePrice - afterPrice } : { key: k, saving: 0, part: true },
       }));
     }
@@ -650,10 +669,15 @@ const Core = (() => {
     return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
   }
 
-  function cartUrl(cat, nom, list) {
+  // site : adresse du site, pour que le script y renvoie les produits refusés (#indispo=…)
+  function cartUrl(cat, nom, list, site = null) {
     const order = {
-      v: 1, nom, magasin: cat.magasin.ref, nomMagasin: cat.magasin.nom,
-      articles: list.filter((e) => !e.owned && e.packs).map((e) => [e.product.ean, e.packs, e.product.nom]),
+      v: 1, nom, magasin: cat.magasin.ref, nomMagasin: cat.magasin.nom, ...(site ? { site } : {}),
+      // [code-barres, paquets, nom, remplaçants : [code-barres, paquets, nom, prix, conditionnement]] : le script propose les
+      // remplaçants quand Carrefour refuse un produit (indisponible ce jour-là)
+      articles: list.filter((e) => !e.owned && e.packs).map((e) => [e.product.ean, e.packs, e.product.nom,
+        (e.alternatives || []).filter((a) => a.prix > 0 && a.prix_unite > 0).slice(0, 3)
+          .map((a) => [a.ean, packsFor(a, e.used), a.nom, a.prix, a.conditionnement || ""])]),
     };
     // set-store choisit d'abord le bon Drive ; l'ancre est conservée après la redirection
     return `https://www.carrefour.fr/set-store/${encodeURIComponent(cat.magasin.ref)}#recette-macros=${encode(order)}`;
@@ -664,7 +688,7 @@ const Core = (() => {
     proteinPer100kcal, parseLine, parseLines, scaleIngredient, quantityLabel, isUsable, candidatesFor, packsFor, costLine,
     computeLines, totals, shoppingList, ACTIVITY, GOALS, dailyTargets, mealTarget, portionsForTarget, tooLightForMeal, recipeScore,
     ALLERGENS, DIETS, EQUIPMENT, recipeTraits, recipeCompat, householdPrefs, memberPortions, budgetTimePenalty,
-    encode, decode, cartUrl, HEALTH_LEVERS, healthProfile, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
+    encode, decode, cartUrl, prefKey, HEALTH_LEVERS, healthProfile, formatKey, cheapestPacks, isPantry, stepIngredients, fridgeMatch, NUTRIENT_INFO, nutrientTargets, genericEntry, dayTargets, memberDaily, SLOTS, slotsFor, planGaps,
   };
 })();
 

@@ -27,7 +27,7 @@ const ui = { tag: null, query: "", view: {}, cookStep: 0, showAll: false, folds:
 
 function loadState() {
   const base = { menu: {}, pins: {}, owned: [], members: [], foyer: { budget: "", temps: "", materiel: null }, rankFor: null, group: null,
-    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true, formatKeep: [],
+    custom: [], strategy: "pertinence", pantryBuy: [], keepAwake: true, formatKeep: [], prefProducts: {}, unavailable: {},
     favs: [], fridge: [], plan: {} };
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
@@ -153,9 +153,30 @@ function servingOf(r) {
 // Ce qu'on enregistre : qui et combien d'invités, pas le résultat (il suit les profils)
 const servingToStore = (s) => (s.who ? { who: [...s.who], guests: s.guests || 0 } : { p: s.p, t: s.t });
 
+// Produits signalés indisponibles au Drive (par le script du panier) : écartés pendant UNAVAILABLE_DAYS
+const UNAVAILABLE_DAYS = 7;
+let unavailableCache = null;
+function unavailableSet() {
+  if (!unavailableCache) {
+    const limit = Date.now() - UNAVAILABLE_DAYS * 864e5;
+    unavailableCache = new Set(Object.entries(state.unavailable || {}).filter(([, d]) => Date.parse(d) >= limit).map(([e]) => e));
+  }
+  return unavailableCache;
+}
+
+// Préférences ou indisponibles modifiés : les valeurs des recettes changent
+function productsChanged() {
+  unavailableCache = null;
+  statsCache.clear();
+  scoreCache.clear();
+  healthCache.clear();
+  save();
+}
+
 function compute(r, serving = servingOf(r)) {
   const factor = (serving.p * serving.t) / r.portions;
-  const lines = C.computeLines(cat, r.ingredients, { factor, pins: state.pins, strategy: state.strategy, keyPrefix: `${r.id}:` });
+  const lines = C.computeLines(cat, r.ingredients, { factor, pins: state.pins, strategy: state.strategy, keyPrefix: `${r.id}:`,
+    prefs: state.prefProducts, lineEanFirst: !!r.perso, unavailable: unavailableSet() });
   const t = C.totals(lines);
   return {
     lines, ...t, serving,
@@ -331,7 +352,12 @@ function ingredientsHtml(lines) {
       `<option value="${esc(p.ean)}"${p === x.product ? " selected" : ""}>${esc(p.nom)} — ${euro(p.prix)} (${esc(unitLabel(p))})${p.promo ? " · " + esc(p.promo) : ""}</option>`).join("");
     return `<li>${thumb(x.product)}<div>
       <div class="ing-head"><span>${esc(x.ing.raw)}</span><span class="price">${euro(x.cost)}</span></div>
-      <select class="product-select" data-action="pin" data-key="${esc(x.key)}" aria-label="Produit pour ${esc(x.ing.name)}">${options}</select>
+      <div class="pick-row">
+        <select class="product-select" data-action="pin" data-key="${esc(x.key)}" aria-label="Produit pour ${esc(x.ing.name)}">${options}</select>
+        <button type="button" class="star${x.preferred ? " on" : ""}" data-action="pref-product" data-key="${esc(x.prefKey)}" data-ean="${esc(x.product.ean)}"
+          aria-pressed="${x.preferred}" title="${x.preferred ? "Produit préféré pour" : "Toujours utiliser ce produit pour"} « ${esc(x.ing.name)} »">${x.preferred ? "★" : "☆"}</button>
+      </div>
+      ${x.replaced ? `<div class="ing-note replaced">⚠️ ${esc(x.replaced.nom)} a été signalé indisponible : remplacé.</div>` : ""}
       <div class="ing-note">${x.macros ? `${num(x.macros[0])} kcal · P ${num(x.macros[1], 1)} g` : "macros inconnues"}${x.generic ? " · valeurs moyennes *" : ""}${x.product.promo ? ` · <span class="promo">${esc(x.product.promo)}</span>` : ""}</div>
     </div></li>`;
   }).join("")}</ul>`;
@@ -863,17 +889,18 @@ const cartLines = (lines) => lines.filter((x) => !skippedInCart(x));
 function menuShopping() {
   const entries = [...planEntries(), ...menuEntries()];
   const lines = entries.flatMap(({ res }) => res.lines);
+  const replaced = [...new Map(lines.filter((x) => x.replaced).map((x) => [x.replaced.ean, x])).values()];
   // ce qui reste au placard, regroupé par nom
   const pantry = new Map();
   for (const x of lines.filter(isSkippable)) {
     const k = pantryKey(x);
     if (!pantry.has(k)) pantry.set(k, { key: k, name: x.ing.name, optional: x.ing.optional, buy: !skippedInCart(x) });
   }
-  return { entries, pantry: [...pantry.values()], list: shopping(cartLines(lines)) };
+  return { entries, replaced, pantry: [...pantry.values()], list: shopping(cartLines(lines)) };
 }
 
 // Liste de courses : produits additionnés sur tout le menu, puis formats optimisés (sauf ceux qu'on garde)
-const shopping = (lines) => C.shoppingList(lines, { exclude: new Set(state.owned), cat, keep: new Set(state.formatKeep) });
+const shopping = (lines) => C.shoppingList(lines, { exclude: new Set(state.owned), cat, keep: new Set(state.formatKeep), unavailable: unavailableSet() });
 
 function pantryChip(item) {
   return `<button type="button" class="chip pantry-chip" data-action="pantry-buy" data-key="${esc(item.key)}" aria-pressed="${item.buy}"
@@ -881,7 +908,7 @@ function pantryChip(item) {
 }
 
 function viewCourses() {
-  const { entries, list, pantry } = menuShopping();
+  const { entries, list, pantry, replaced } = menuShopping();
   if (!entries.length) {
     return `<div class="page-head"><h1>Courses</h1></div>
       <div class="empty"><div class="big-emoji">🛒</div><p>Planifiez votre semaine ou ajoutez des recettes avec <b>+</b> : la liste de courses se fait toute seule.</p>
@@ -900,6 +927,10 @@ function viewCourses() {
     <div class="two-cols">
       <div>
         <p class="muted">Cochez ce que vous avez déjà : ce ne sera pas ajouté au panier.</p>
+        ${replaced.length ? `<div class="warning replaced-box"><b>⚠️ ${replaced.length} produit${replaced.length > 1 ? "s" : ""} signalé${replaced.length > 1 ? "s" : ""} indisponible${replaced.length > 1 ? "s" : ""} au Drive, déjà remplacé${replaced.length > 1 ? "s" : ""} :</b>
+          <ul>${replaced.map((x) => `<li>${esc(x.replaced.nom)} → <b>${esc(x.product ? x.product.nom : "aucun remplaçant")}</b>
+            <button type="button" class="link-btn" data-action="available-again" data-ean="${esc(x.replaced.ean)}">Il est de nouveau disponible</button></li>`).join("")}</ul>
+          <p class="hint">Vous pouvez choisir un autre remplaçant dans la fiche de la recette.</p></div>` : ""}
         ${pantry.length ? `<div class="pantry-box"><b>Vous avez sûrement déjà…</b>
           <div class="chips-select">${pantry.map(pantryChip).join("")}</div>
           <p class="hint">Pas ajoutés au panier. Touchez-en un s'il vous manque.</p></div>` : ""}
@@ -974,6 +1005,7 @@ function viewProfil() {
             `<button type="button" class="chip" data-action="foyer-materiel" data-value="${k}" aria-pressed="${mat.includes(k)}">${esc(e.label)}</button>`).join("")}</div>
           <p class="hint">Les recettes qui demandent un appareil absent sont masquées.</p>
         </div>
+        ${productPrefsPanel()}
       </div>
       <aside class="panel sticky">
         <h2>Le foyer en bref</h2>
@@ -988,6 +1020,20 @@ function viewProfil() {
         <a class="btn primary block" href="#/" style="margin-top:12px">Voir les recettes adaptées →</a>
       </aside>
     </div>`;
+}
+
+function productPrefsPanel() {
+  const prefs = Object.entries(state.prefProducts).map(([k, ean]) => [k, cat.byEan.get(ean), ean]);
+  const indispo = [...unavailableSet()].map((e) => cat.byEan.get(e)).filter(Boolean);
+  return `<div class="panel">
+    <h2>⭐ Mes produits préférés</h2>
+    ${prefs.length ? `<ul class="pref-list">${prefs.map(([k, p, ean]) => `<li>${thumb(p)}<div><b>${esc(k)}</b><small>${p ? esc(p.nom) : "produit retiré du Drive : le site choisit à nouveau"}</small></div>
+      <button type="button" class="icon-btn" data-action="pref-remove" data-key="${esc(k)}" aria-label="Oublier la préférence pour ${esc(k)}">✕</button></li>`).join("")}</ul>`
+      : `<p class="muted">Aucun pour l'instant.</p>`}
+    <p class="hint">Dans la liste des ingrédients d'une recette, touchez ☆ à côté du produit : il sera pris d'office dans toutes les recettes qui demandent cet ingrédient. Un choix fait dans une recette précise reste prioritaire.</p>
+    ${indispo.length ? `<h3 style="font-size:1rem;margin:14px 0 6px">Signalés indisponibles</h3><ul class="pref-list">${indispo.map((p) => `<li>${thumb(p)}<div><b>${esc(p.nom)}</b><small>remplacé jusqu'au ${new Date(Date.parse(state.unavailable[p.ean]) + UNAVAILABLE_DAYS * 864e5).toLocaleDateString("fr-FR")}</small></div>
+      <button type="button" class="link-btn" data-action="available-again" data-ean="${esc(p.ean)}">De nouveau disponible</button></li>`).join("")}</ul>` : ""}
+  </div>`;
 }
 
 function memberPrefsSummary(x) {
@@ -1122,7 +1168,7 @@ function draftFor(id) {
   return { draft: state.draft, editing };
 }
 const draftLines = (d) => (d.texte || "").split("\n").map((l) => l.trim()).filter(Boolean);
-const draftRecipe = (d) => ({ id: d.id || "brouillon", portions: Math.max(1, +d.portions || 1), ingredients: draftLines(d) });
+const draftRecipe = (d) => ({ id: d.id || "brouillon", portions: Math.max(1, +d.portions || 1), ingredients: draftLines(d), perso: true });
 
 // Ligne d'ingrédient pour un produit du Drive : nom lisible (sans la marque), épinglé par son code-barres
 function lineForProduct(p) {
@@ -1321,6 +1367,17 @@ let lastHash = null;
 function render({ keepScroll = false } = {}) {
   const hash = location.hash || "#/";
   // anciens liens partagés : #r=<recette du mode libre>
+  // retour du script Carrefour : produits refusés (indisponibles ce jour-là)
+  const indispo = hash.match(/^#indispo=([\d,]+)$/);
+  if (indispo) {
+    const eans = indispo[1].split(",").filter(Boolean);
+    const today = new Date().toISOString().slice(0, 10);
+    eans.forEach((e) => { state.unavailable[e] = today; });
+    productsChanged();
+    location.replace("#/courses");
+    toast(`${eans.length} produit${eans.length > 1 ? "s" : ""} signalé${eans.length > 1 ? "s" : ""} indisponible${eans.length > 1 ? "s" : ""} : les recettes utilisent des remplaçants pendant ${UNAVAILABLE_DAYS} jours.`);
+    return;
+  }
   const legacy = hash.match(/^#r=(.+)$/);
   if (legacy) {
     try {
@@ -1465,7 +1522,7 @@ function rememberCart(nom, list) {
 function sendToCart(nom, list) {
   if (!list.some((e) => !e.owned && e.packs)) return toast("Rien à ajouter au panier.");
   rememberCart(nom, list);
-  const url = C.cartUrl(cat, nom, list);
+  const url = C.cartUrl(cat, nom, list, `${location.origin}${location.pathname}`);
   if (scriptInstalled() || setupDone()) {
     window.open(url, "_blank", "noopener");
     return;
@@ -1688,6 +1745,17 @@ document.addEventListener("click", (e) => {
       break;
     }
     case "save-draft": saveDraft(); break;
+    case "pref-product": {
+      const k = el.dataset.key;
+      const on = state.prefProducts[k] === el.dataset.ean;
+      if (on) delete state.prefProducts[k]; else state.prefProducts[k] = el.dataset.ean;
+      productsChanged();
+      toast(on ? `Préférence oubliée pour « ${k} ».` : `⭐ Ce produit sera pris pour « ${k} » dans toutes les recettes.`);
+      render({ keepScroll: true });
+      break;
+    }
+    case "pref-remove": delete state.prefProducts[el.dataset.key]; productsChanged(); render({ keepScroll: true }); break;
+    case "available-again": delete state.unavailable[el.dataset.ean]; productsChanged(); render({ keepScroll: true }); break;
     case "format-keep":
       e.preventDefault();
       state.formatKeep = [...new Set([...state.formatKeep, el.dataset.key])];

@@ -576,3 +576,16 @@ details.fold > summary small { font-weight: 700; }
 .health-list li.pro b { color: var(--ok); }
 .health-list li.con b { color: var(--warn); }
 .health-list a { color: var(--muted); }
+
+/* ---------- Produits préférés et indisponibles ---------- */
+.pick-row { display: flex; gap: 6px; align-items: center; }
+.pick-row .product-select { flex: 1; min-width: 0; }
+.star { border: 0; background: var(--surface-2); color: var(--muted); width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 1.1rem; flex: none; }
+.star.on { background: #fff4c2; color: #c98a00; }
+.ing-note.replaced { color: var(--warn); font-weight: 700; }
+.replaced-box ul { margin: 6px 0; padding-left: 18px; }
+.replaced-box li { margin: 4px 0; }
+.pref-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pref-list li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.pref-list b { display: block; text-transform: capitalize; }
+.pref-list small { color: var(--muted); font-weight: 700; font-size: 0.8rem; }
